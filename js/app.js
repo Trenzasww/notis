@@ -7,7 +7,7 @@ import { buildPreview, linkCard, urlsIn } from './links.js';
 import * as Sync from './sync.js';
 
 const COLORS = ['#FFD60A', '#FF453A', '#FF9F0A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F', '#8E8E93'];
-const S = { view: 'chats', chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
+const S = { view: 'home', lastChat: null, chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
 const isTouch = matchMedia('(pointer:coarse)').matches;
 
 const root = $('#app');
@@ -51,7 +51,7 @@ function nav(view, chatId = null, { push = true, hl = null } = {}) {
   if (push) history.pushState({ view, chatId }, '');
   renderAll();
 }
-addEventListener('popstate', e => { const s = e.state || { view: 'chats', chatId: null }; nav(s.view, s.chatId, { push: false }); });
+addEventListener('popstate', e => { const s = e.state || { view: 'home', chatId: null }; nav(s.view, s.chatId, { push: false }); });
 
 function renderAll() {
   document.body.dataset.view = S.view; document.body.dataset.chat = S.chatId ? '1' : '0';
@@ -60,7 +60,7 @@ function renderAll() {
 
 // ---------------------------------------------------------------- barra lateral / pestañas
 function navBtn(v, icon, label) {
-  return h('button', { class: 'nav-b' + (S.view === v ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? S.chatId : null) }, ic(icon, 19), h('span', null, label));
+  return h('button', { class: 'nav-b' + (S.view === v ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? S.chatId : null) }, ic(icon, 20), h('span', null, label));
 }
 function syncBadge() {
   const st = Sync.state.status, cls = { ok: 'ok', sync: 'spin', err: 'bad', idle: 'ok', off: 'off' }[st] || 'off';
@@ -71,27 +71,50 @@ function chatRow(c) {
   const items = chatItems(c.id), last = items[items.length - 1];
   const prev = last ? (last.file ? `${FILE_ICON[kindOf(last.file.mime, last.file.name)]} ${last.text || last.file.name}` : last.text.replace(/[#*`>]/g, '').split('\n').find(l => l.trim()) || '') : 'Sin mensajes';
   return h('button', { class: 'crow' + (S.chatId === c.id ? ' on' : ''), onclick: () => nav('chats', c.id) },
-    h('span', { class: 'avatar', style: { background: `linear-gradient(135deg, ${c.color}, ${c.color}99)` } }, c.emoji),
-    h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.pinned && h('i', { class: 'pinned-i' }, ic('pin', 13)), c.name), h('span', { class: 'cprev' }, prev)),
+    h('span', { class: 'avatar', style: { background: `color-mix(in srgb, ${c.color} 22%, var(--surface2))` } }, c.emoji),
+    h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name, c.pinned && h('i', { class: 'pinned-i' }, ic('pin', 12))), h('span', { class: 'cprev' }, prev)),
     h('span', { class: 'ctime' }, last ? shortWhen(last.created) : ''));
+}
+function syncCard() {
+  const on = Sync.isConnected();
+  return h('div', { class: 'syncard' },
+    h('b', null, ic('cloud', 18), on ? 'Drive conectado' : 'Sincronizá tus dispositivos'),
+    h('p', null, on ? (Sync.state.msg || 'Tus notas y archivos están al día.') : 'Usá tu Google Drive gratis para ver todo en tu PC y en tu iPhone.'),
+    h('button', { class: 'btn', onclick: () => nav('settings') }, on ? 'Ver ajustes' : 'Configurar'));
 }
 function renderSide() {
   const q = S.sideQ.trim().toLowerCase();
   const list = sortedChats().filter(c => !q || c.name.toLowerCase().includes(q));
+  const search = h('input', { type: 'search', placeholder: 'Buscar o filtrar chats', id: 'sideq', value: S.sideQ, enterKeyHint: 'search',
+    oninput: e => { S.sideQ = e.target.value; const p = e.target.selectionStart; renderSide(); const i = $('#sideq'); i.focus(); i.setSelectionRange(p, p); },
+    onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { S.q = e.target.value.trim(); S.qChat = ''; S.sideQ = ''; nav('search'); } } });
   side.replaceChildren(
     h('div', { class: 'side-head' },
-      h('div', { class: 'brand' }, h('span', { class: 'logo' }, '📝'), h('b', null, 'Notis')),
-      h('div', { class: 'row gap6' }, syncBadge(), h('button', { class: 'icon-btn', title: 'Nuevo chat', onclick: () => chatDialog() }, ic('plus', 22)))),
-    h('div', { class: 'nav-d' }, navBtn('chats', 'chat', 'Chats'), navBtn('calendar', 'cal', 'Calendario'), navBtn('search', 'search', 'Buscar'), navBtn('settings', 'cfg', 'Ajustes')),
-    h('div', { class: 'sidesearch' }, ic('search', 17), h('input', { type: 'search', placeholder: 'Filtrar chats', value: S.sideQ, oninput: e => { S.sideQ = e.target.value; const p = e.target.selectionStart; renderSide(); const i = $('.sidesearch input'); i.focus(); i.setSelectionRange(p, p); } })),
-    h('div', { class: 'list' }, list.length ? list.map(chatRow) : h('p', { class: 'mute pad' }, 'No hay chats. Tocá + para crear uno.')));
+      h('div', { class: 'brand' }, h('span', { class: 'logo' }, '📝'), h('div', { class: 'btxt' }, h('b', null, 'Notis'), h('small', null, settings.name || 'Espacio personal'))),
+      h('div', { class: 'row gap6 m-only' }, syncBadge())),
+    h('div', { class: 'm-title m-only' }, 'Chats'),
+    h('label', { class: 'search-box' }, ic('search', 18), search, h('kbd', { class: 'd-only' }, '⌘K')),
+    h('div', { class: 'd-only' }, h('div', { class: 'sec-l' }, 'Menú principal'),
+      h('div', { class: 'navlist' }, navBtn('home', 'home', 'Inicio'), navBtn('chats', 'chat', 'Chats'), navBtn('calendar', 'cal', 'Calendario'), navBtn('search', 'search', 'Buscar'), navBtn('settings', 'cfg', 'Ajustes'))),
+    h('div', { class: 'sec-l' }, h('span', null, 'Mis chats'), h('button', { class: 'icon-btn xs', title: 'Nuevo chat', onclick: () => chatDialog() }, ic('plus', 17))),
+    h('div', { class: 'list' }, list.length ? list.map(chatRow) : h('p', { class: 'mute pad' }, 'No hay chats. Tocá + para crear uno.')),
+    h('div', { class: 'side-foot d-only' }, syncCard()));
 }
 function renderTabbar() {
-  const t = (v, i, l) => h('button', { class: 'tab' + (S.view === v ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? null : null) }, ic(i, 23), h('span', null, l));
-  tabbar.replaceChildren(t('chats', 'chat', 'Chats'), t('calendar', 'cal', 'Calendario'), t('search', 'search', 'Buscar'), t('settings', 'cfg', 'Ajustes'));
+  const t = (v, i, l) => h('button', { class: 'tab' + (S.view === v ? ' on' : ''), onclick: () => nav(v, null) }, ic(i, 22), h('span', null, l));
+  tabbar.replaceChildren(t('home', 'home', 'Inicio'), t('chats', 'chat', 'Chats'), t('calendar', 'cal', 'Calendario'), t('search', 'search', 'Buscar'), t('settings', 'cfg', 'Ajustes'));
 }
-Sync.onState(() => { const b = $('.sync'); if (b) b.replaceWith(syncBadge()); const s = $('#syncstat'); if (s) renderSyncStat(s); });
-addEventListener('notis:synced', async () => { await loadAll(); renderSide(); if (S.view === 'chats' && S.chatId) renderMain(); else if (S.view === 'calendar') renderMain(); });
+const fab = h('button', { class: 'fab', title: 'Crear', 'aria-label': 'Crear', onclick: () => createMenu() }, ic('plus', 28));
+root.append(fab);
+function createMenu() {
+  sheet('Crear', [
+    { label: 'Nota rápida', icon: 'note', run: () => quickAdd('note') }, { label: 'Checklist', icon: 'list', run: () => quickAdd('check') },
+    { label: 'Foto, video o archivo', icon: 'image', run: () => quickAdd('file') }, { label: 'Evento en el calendario', icon: 'cal', run: () => eventDialog(null, S.calSel) },
+    { label: 'Nuevo chat', icon: 'chat', run: () => chatDialog() }]);
+}
+addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); S.q = ''; S.qChat = ''; nav('search'); } });
+Sync.onState(() => { const b = $('.sync'); if (b) b.replaceWith(syncBadge()); const s = $('#syncstat'); if (s) renderSyncStat(s); const f = $('.side-foot'); if (f) f.replaceChildren(syncCard()); });
+addEventListener('notis:synced', async () => { await loadAll(); renderSide(); if ((S.view === 'chats' && S.chatId) || S.view === 'calendar' || S.view === 'home') renderMain(); });
 
 // ---------------------------------------------------------------- diálogo de chat
 function chatDialog(chat) {
@@ -119,7 +142,74 @@ function chatDialog(chat) {
 // ---------------------------------------------------------------- vista principal
 function renderMain() {
   main.replaceChildren(); main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
-  ({ chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
+  ({ home: homeView, chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
+}
+
+// ---------------------------------------------------------------- INICIO
+function homeView() {
+  const now = new Date(), hr = now.getHours(), g = hr < 6 ? 'Buenas noches' : hr < 13 ? 'Buen día' : hr < 20 ? 'Buenas tardes' : 'Buenas noches';
+  const items = live([...S.items.values()].flat()).filter(i => chatById(i.chatId));
+  const notes = items.filter(i => !i.file).length, files = items.filter(i => i.file).length;
+  const today = ymd(now), evs = live(S.events).filter(e => e.date >= today).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const recents = [...items].sort((a, b) => b.created - a.created).slice(0, 10);
+  const pinned = sortedChats().filter(c => c.pinned);
+  const dateStr = now.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const stat = (n, l) => h('div', { class: 'stat' }, h('b', null, n), h('small', null, l));
+  const rcard = it => {
+    const c = chatById(it.chatId), k = it.file ? kindOf(it.file.mime, it.file.name) : null;
+    const head = h('div', { class: 'rh' }, h('span', { class: 'em', style: { background: `color-mix(in srgb, ${c.color} 25%, var(--surface2))` } }, c.emoji), h('span', null, shortWhen(it.created)));
+    if (k === 'image') {
+      const img = h('img', { alt: '' }); imageURL(it, 500).then(u => u && (img.src = u));
+      return h('button', { class: 'rcard img', onclick: () => nav('chats', it.chatId, { hl: it.id }) }, img, head);
+    }
+    const txt = it.text ? it.text.replace(/[#*`>]|- \[[ x]\]/g, '').trim() : it.file ? `${FILE_ICON[k]} ${it.file.name}` : '';
+    return h('button', { class: 'rcard', onclick: () => nav('chats', it.chatId, { hl: it.id }) }, head, h('p', null, txt));
+  };
+  const evRow = e => h('button', { class: 'ev', onclick: () => { S.calSel = e.date; S.calMonth = new Date(e.date + 'T12:00'); nav('calendar'); } }, h('i', { class: 'evbar', style: { background: e.color } }),
+    h('span', { class: 'evinfo' }, h('b', null, e.title), h('small', { class: 'mute' }, [new Date(e.date + 'T12:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }), e.time || 'Todo el día'].join(' · '))));
+  main.append(h('div', { class: 'page home' },
+    h('div', { class: 'hello' }, h('div', null, h('small', { class: 'mute caps' }, dateStr), h('h1', null, g, settings.name ? ', ' : '', settings.name ? h('span', { class: 'acc' }, settings.name) : null))),
+    h('button', { class: 'search-big', onclick: () => { S.q = ''; S.qChat = ''; nav('search'); } }, ic('search', 19), 'Buscar notas, archivos, links…'),
+    h('div', { class: 'quick' }, [['note', 'Nota', () => quickAdd('note')], ['list', 'Checklist', () => quickAdd('check')], ['image', 'Archivo', () => quickAdd('file')], ['cal', 'Evento', () => eventDialog(null, today)]]
+      .map(([i, l, f]) => h('button', { class: 'qtile', onclick: f }, h('span', { class: 'qic' }, ic(i, 22)), h('span', null, l)))),
+    h('div', { class: 'stats' }, stat(notes, 'Notas'), stat(files, 'Archivos'), stat(evs.length, 'Eventos próximos')),
+    recents.length ? [h('div', { class: 'sec' }, h('span', null, 'Recientes'), h('button', { onclick: () => nav('chats', null) }, 'Ver chats')), h('div', { class: 'rscroll' }, recents.map(rcard))] : null,
+    evs.length ? [h('div', { class: 'sec' }, h('span', null, 'Próximos eventos'), h('button', { onclick: () => nav('calendar') }, 'Calendario')), h('div', { class: 'card glass evlist' }, evs.slice(0, 4).map(evRow))] : null,
+    pinned.length ? [h('div', { class: 'sec' }, h('span', null, 'Chats fijados')), h('div', { class: 'card glass evlist' }, pinned.map(chatRow))] : null));
+}
+function quickAdd(kind = 'note') {
+  let chat = (S.lastChat && chatById(S.lastChat)) || sortedChats()[0]; if (!chat) return chatDialog();
+  const files = [];
+  const chips = h('div', { class: 'chips' });
+  const drawChips = () => chips.replaceChildren(...sortedChats().map(c => h('button', { class: 'chip' + (c.id === chat.id ? ' on' : ''), onclick: () => { chat = c; drawChips(); } }, `${c.emoji} ${c.name}`)));
+  drawChips();
+  const ta = h('textarea', { class: 'field big-ta', rows: 6, placeholder: kind === 'check' ? 'Tus tareas…' : 'Escribí tu nota… (podés usar #etiquetas)' }); ta.value = kind === 'check' ? '- [ ] ' : '';
+  const list = h('div', { class: 'pending', hidden: true });
+  const drawFiles = () => { list.hidden = !files.length; list.replaceChildren(...files.map((p, i) => h('div', { class: 'pchip' }, p.kind === 'image' ? h('img', { src: p.url, alt: '' }) : h('span', { class: 'ficon' }, FILE_ICON[p.kind]), h('small', null, p.file.name), h('button', { class: 'icon-btn', onclick: () => { files.splice(i, 1); drawFiles(); } }, ic('x', 14))))); };
+  const add = fs => { for (const f of fs) { const k = kindOf(f.type, f.name); files.push({ file: f, kind: k, url: k === 'image' || k === 'video' ? URL.createObjectURL(f) : '' }); } drawFiles(); };
+  const mk = accept => { const i = h('input', { type: 'file', multiple: true, accept, hidden: true, onchange: () => { add([...i.files]); i.value = ''; } }); return i; };
+  const inM = mk('image/*,video/*'), inA = mk('*/*');
+  const ov = overlay(h('div', { class: 'dlg glass wide' }, h('h3', null, kind === 'check' ? 'Nuevo checklist' : kind === 'file' ? 'Subir archivos' : 'Nota rápida'),
+    h('div', { class: 'lbl' }, 'Guardar en'), chips, ta, list,
+    h('div', { class: 'row between wrap gap' },
+      h('div', { class: 'row gap6' }, h('button', { class: 'btn ghost', onclick: () => inM.click() }, ic('image', 18), 'Fotos'), h('button', { class: 'btn ghost', onclick: () => inA.click() }, ic('clip', 18), 'Archivos'), inM, inA),
+      h('div', { class: 'row gap6' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'),
+        h('button', { class: 'btn', onclick: async () => {
+          const text = ta.value.trim().replace(/^- \[ \]\s*$/, ''); if (!text && !files.length) return toast('Escribí algo o elegí un archivo');
+          try { await persistEntry(chat, text, files.splice(0)); S.lastChat = chat.id; ov.close(); toast(`Guardado en ${chat.emoji} ${chat.name}`); renderAll(); }
+          catch (e) { toast('No se pudo guardar: ' + (e.message || e), 4500); }
+        } }, 'Guardar')))));
+  setTimeout(() => { if (kind !== 'file') ta.focus(); }, 120);
+}
+async function persistEntry(chat, text, files, onItem) {
+  for (let i = 0; i < files.length; i++) {
+    const { file, kind, url } = files[i]; if (url) URL.revokeObjectURL(url);
+    const meta = await mediaMeta(file, kind);
+    await DB.put('blobs', { id: meta.id, blob: file });
+    const it = await addItem(chat.id, { type: 'file', file: meta, text: i === 0 ? text : '' });
+    onItem?.(it); if (i === 0 && text) attachLinkPreview(it);
+  }
+  if (!files.length) { const it = await addItem(chat.id, { type: 'text', text }); onItem?.(it); attachLinkPreview(it); }
 }
 
 // ---------------------------------------------------------------- CHAT
@@ -358,15 +448,7 @@ async function sendMessage(chat, ta, pendBox, feed, fit) {
   const lastNow = chatItems(chat.id).slice(-1)[0];
   if (!lastNow || ymd(lastNow.created) !== ymd(Date.now())) feed.append(h('div', { class: 'dsep' }, h('span', null, 'Hoy')));
   try {
-    for (let i = 0; i < files.length; i++) {
-      const { file, kind, url } = files[i]; if (url) URL.revokeObjectURL(url);
-      const meta = await mediaMeta(file, kind);
-      await DB.put('blobs', { id: meta.id, blob: file });
-      const it = await addItem(chat.id, { type: 'file', file: meta, text: i === 0 ? text : '' });
-      append(it);
-      if (i === 0 && text) attachLinkPreview(it);
-    }
-    if (!files.length) { const it = await addItem(chat.id, { type: 'text', text }); append(it); attachLinkPreview(it); }
+    await persistEntry(chat, text, files, append);
     renderSide();
     const sm = $('.ctitle small'); if (sm) sm.textContent = `${chatItems(chat.id).length} elementos`;
   } catch (e) { toast('No se pudo guardar: ' + (e.message || e), 4500); }
@@ -482,13 +564,14 @@ function settingsView() {
   main.append(h('div', { class: 'page' },
     h('div', { class: 'ph' }, h('h2', null, 'Ajustes')),
     h('section', { class: 'card glass' }, h('h3', null, '🎨 Apariencia'),
+      h('label', { class: 'lbl' }, 'Tu nombre'), h('input', { type: 'text', class: 'field', placeholder: 'Para el saludo de Inicio', value: settings.name || '', oninput: e => setSettings({ name: e.target.value }) }),
       h('label', { class: 'lbl' }, 'Modo'), seg([['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Oscuro']], settings.mode, v => { setSettings({ mode: v }); re(); }),
       h('label', { class: 'lbl' }, `Paletas (${PALETTES.length})`),
       h('input', { type: 'search', class: 'field', placeholder: 'Buscar paleta…', value: S.palQ, oninput: e => { S.palQ = e.target.value; drawPal(); } }), grid,
       h('div', { class: 'custom' }, h('button', { class: 'pal' + (settings.palette === '__custom' ? ' on' : ''), onclick: () => { setSettings({ palette: '__custom' }); re(); } }, h('span', { class: 'pchip', style: { background: `linear-gradient(135deg, ${settings.custom}, ${settings.custom2})` } }, settings.palette === '__custom' && ic('check', 16)), h('small', null, 'Personalizada')),
         h('label', { class: 'colorin' }, 'Color 1', h('input', { type: 'color', value: settings.custom, oninput: e => setSettings({ custom: e.target.value, palette: '__custom' }) })),
         h('label', { class: 'colorin' }, 'Color 2', h('input', { type: 'color', value: settings.custom2, oninput: e => setSettings({ custom2: e.target.value, palette: '__custom' }) }))),
-      h('label', { class: 'lbl' }, 'Burbujas'), seg([['gradient', 'Degradado'], ['solid', 'Sólido'], ['glass', 'Vidrio']], settings.bubble, v => { setSettings({ bubble: v }); re(); }),
+      h('label', { class: 'lbl' }, 'Burbujas'), seg([['soft', 'Suave'], ['solid', 'Sólido'], ['gradient', 'Degradado']], settings.bubble, v => { setSettings({ bubble: v }); re(); }),
       toggle('Negro puro (OLED)', 'oled', 'Ahorra batería en pantallas OLED como la del iPhone'), toggle('Todo en negrita', 'boldAll', 'Tipografía SF Bold en todo el texto'), toggle('Fondo decorado', 'wallpaper'),
       h('label', { class: 'sl' }, h('span', null, 'Tamaño del texto'), h('input', { type: 'range', min: .85, max: 1.35, step: .01, value: settings.scale, oninput: e => setSettings({ scale: +e.target.value }) })),
       h('label', { class: 'sl' }, h('span', null, 'Redondeo'), h('input', { type: 'range', min: 4, max: 28, step: 1, value: settings.radius, oninput: e => setSettings({ radius: +e.target.value }) })),
@@ -537,7 +620,7 @@ async function importBackup(file) {
 async function boot() {
   try {
     await loadAll(); await seed();
-    const s = history.state; if (s?.view) { S.view = s.view; S.chatId = s.chatId; } else history.replaceState({ view: 'chats', chatId: null }, '');
+    const s = history.state; if (s?.view) { S.view = s.view; S.chatId = s.chatId; } else history.replaceState({ view: 'home', chatId: null }, '');
     renderAll();
     navigator.storage?.persist?.();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

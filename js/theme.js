@@ -26,7 +26,7 @@ export const PALETTES = [
 
 export const DEFAULTS = {
   palette: 'Amarillo y Negro', mode: 'dark', custom: '#FFD60A', custom2: '#FF9F0A', oled: false, boldAll: false,
-  scale: 1, radius: 18, bubble: 'gradient', wallpaper: true, enterSends: true, updated: 0
+  scale: 1, radius: 18, bubble: 'soft', name: '', wallpaper: true, enterSends: true, updated: 0
 };
 
 const KEY = 'notis.settings';
@@ -63,10 +63,10 @@ export function applyTheme() {
   const p = currentPalette(), dark = resolvedMode() === 'dark', hue = hexToHsl(p.a), s = p.n ? 1 : 0, r = document.documentElement.style;
   const hsl = (sat, l) => `hsl(${hue} ${sat * s}% ${l}%)`;
   const v = dark ? {
-    bg: settings.oled || !p.n ? (settings.oled ? '#000' : '#0a0a0a') : hsl(30, 7), surface: settings.oled ? '#0c0c0e' : (p.n ? hsl(24, 11.5) : '#151515'),
-    surface2: p.n ? hsl(22, 17) : '#202020', text: '#f6f7fb', mute: p.n ? hsl(12, 68) : '#a3a3a8', line: 'rgba(255,255,255,.1)'
+    bg: settings.oled ? '#000' : hsl(7, 9.5), side: settings.oled ? '#000' : hsl(7, 11.5), surface: settings.oled ? '#0e0e0f' : hsl(7, 13.5), surface2: settings.oled ? '#1a1a1c' : hsl(7, 18.5),
+    text: '#f4f5f8', mute: hsl(8, 64), line: 'rgba(255,255,255,.09)'
   } : {
-    bg: hsl(45, 96), surface: '#ffffff', surface2: hsl(35, 92), text: hsl(30, 11), mute: hsl(12, 38), line: 'rgba(0,0,0,.1)'
+    bg: hsl(25, 97.5), side: hsl(14, 95), surface: '#ffffff', surface2: hsl(16, 94), text: hsl(30, 11), mute: hsl(8, 42), line: 'rgba(0,0,0,.08)'
   };
   const on = c => lum(c) > .5 ? '#111111' : '#ffffff';
   const set = (k, val) => r.setProperty('--' + k, val);
