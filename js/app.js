@@ -7,6 +7,7 @@ import { buildPreview, linkCard, urlsIn } from './links.js';
 import * as Sync from './sync.js';
 import * as P2P from './p2p.js';
 import * as L from './lock.js';
+import * as Lab from './media-lab.js';
 
 const COLORS = ['#FFD60A', '#FF453A', '#FF9F0A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F', '#8E8E93'];
 const S = { view: 'home', lastChat: null, noteId: null, noteChat: null, draft: null, nk: null, _flush: null, _cancel: null, chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
@@ -46,7 +47,7 @@ async function addItem(chatId, data) {
   S.items.get(chatId).push(it);
   return it;
 }
-const saveItem = async it => { await DB.save('items', it); };
+const saveItem = async it => { await DB.save('items', it._note || it); };
 
 // ---------------------------------------------------------------- navegación
 function nav(view, chatId = null, { push = true, hl = null, noteId = null } = {}) {
@@ -259,7 +260,8 @@ function lockBtn() {
 function noteCard(it) {
   return h('button', { class: 'ncard', onclick: () => openNote(it) },
     h('div', { class: 'nc-t' }, it.lock ? ic('lock', 15) : null, it.title || 'Sin título'),
-    it.lock ? h('div', { class: 'nc-p mute' }, `Protegida con contraseña de ${it.lock.len} dígitos`) : (it.text ? h('div', { class: 'nc-p' }, excerpt(it.text)) : null));
+    it.lock ? h('div', { class: 'nc-p mute' }, `Protegida con contraseña de ${it.lock.len} dígitos`) : (it.text ? h('div', { class: 'nc-p' }, excerpt(it.text)) : null),
+    it.atts && it.atts.length ? h('small', { class: 'mute' }, `${it.atts.length} adjunto${it.atts.length > 1 ? 's' : ''}`) : null);
 }
 function newNote(chatId, prefill = '') {
   const cid = chatId || S.chatId || S.noteChat || ((S.lastChat && chatById(S.lastChat)) ? S.lastChat : sortedChats()[0]?.id);
@@ -268,6 +270,39 @@ function newNote(chatId, prefill = '') {
   S.draft = { id: DB.uid(), chatId: cid, type: 'note', title: '', text: prefill, created: Date.now(), pinned: false, _draft: true };
   nav('note', cid, { noteId: S.draft.id });
 }
+// ---------------------------------------------------------------- adjuntos y herramientas de calidad
+const attItem = (note, att, after) => ({ id: note.id + ':' + att.id, chatId: note.chatId, file: att, _note: note, _after: after, get edits() { return att.edits; }, set edits(v) { att.edits = v; } });
+async function openLabFor(it, tab) {
+  const blob = await getBlob(it); if (!blob) return toast('Este archivo todavía no llegó a este dispositivo');
+  Lab.openLab({ blob, name: it.file.name, tab, onSave: ({ blob: nb, name, mode }) => labSave(it, nb, name, mode) });
+}
+async function labSave(it, nb, name, mode) {
+  const kind = kindOf(nb.type, name);
+  const meta = await mediaMeta(new File([nb], name, { type: nb.type }), kind);
+  await DB.put('blobs', { id: meta.id, blob: nb });
+  if (it._note) {
+    const n = it._note; n.atts ||= [];
+    if (mode === 'replace') { const i = n.atts.findIndex(a => a.id === it.file.id); await DB.del('blobs', it.file.id); if (i >= 0) n.atts[i] = meta; else n.atts.push(meta); } else n.atts.push(meta);
+    await DB.save('items', n); it._after?.();
+  } else if (mode === 'replace') { await DB.del('blobs', it.file.id); it.file = meta; it.edits = undefined; await saveItem(it); refreshNode(it); }
+  else { await addItem(it.chatId, { type: 'file', file: meta, text: '' }); S._refreshFeed?.(); }
+  renderSide();
+}
+function attMenu(note, p, rerender) {
+  const att = p.file, k = kindOf(att.mime, att.name), media = k === 'image' || k === 'video';
+  sheet(att.name, [
+    { label: 'Abrir', icon: 'image', run: () => openViewer(p) },
+    media && { label: k === 'image' ? 'Editar foto (recorte, filtros)' : 'Editar video (recorte, filtros)', icon: 'crop', run: () => editMedia(p) },
+    media && { label: 'Aumentar calidad', icon: 'wand', run: () => openLabFor(p, 'quality') },
+    media && { label: 'Cambiar relación de aspecto', icon: 'crop', run: () => openLabFor(p, 'aspect') },
+    { label: 'Comprimir para bajar el peso', icon: 'dl', run: () => openLabFor(p, 'compress') },
+    { label: 'Guardar / compartir archivo', icon: 'share', run: async () => { const b = await getBlob(p); if (b) saveFile(b, att.name); } },
+    { label: 'Quitar de la nota', icon: 'trash', danger: true, run: async () => {
+      if (!(await confirmBox('¿Quitar adjunto?', `Se quita "${att.name}" de esta nota.`, 'Quitar'))) return;
+      note.atts = note.atts.filter(a => a.id !== att.id); await DB.del('blobs', att.id); await DB.save('items', note); rerender();
+    } }]);
+}
+
 function noteMenu(it) {
   sheet(it.title || 'Nota', [
     { label: 'Abrir', icon: 'note', run: () => openNote(it) },
@@ -293,12 +328,38 @@ function noteView() {
   const titleIn = h('textarea', { class: 'ntitle', rows: 1, placeholder: 'Título', maxLength: 140 }); titleIn.value = it.title || '';
   const body = h('textarea', { class: 'nbody', placeholder: 'Escribí acá…' }); body.value = text0 || '';
   const prev = h('div', { class: 'npreview', hidden: true });
+  const attsBox = h('div', { class: 'natts', hidden: true });
+  const renderAtts = () => {
+    const list = it.atts || []; attsBox.hidden = !list.length;
+    attsBox.replaceChildren(...(list.length ? [h('div', { class: 'natts-t' }, `Adjuntos (${list.length})`)] : []), ...list.map(att => {
+      const p = attItem(it, att, renderAtts);
+      return h('div', { class: 'natt' }, fileBody(p), h('div', { class: 'natt-bar' }, h('small', null, `${att.name} · ${fmtSize(att.size)}`),
+        h('button', { class: 'icon-btn xs', 'aria-label': 'Opciones del adjunto', onclick: () => attMenu(it, p, renderAtts) }, ic('more', 18))));
+    }));
+  };
+  const addFiles = async fs => {
+    fs = [...fs]; if (!fs.length) return;
+    it.atts ||= [];
+    try {
+      for (const f of fs) { const k = kindOf(f.type, f.name); const meta = await mediaMeta(f, k); await DB.put('blobs', { id: meta.id, blob: f }); it.atts.push(meta); }
+      await S._flush(); renderAtts();
+      toast(`${fs.length} adjunto${fs.length > 1 ? 's' : ''} agregado${fs.length > 1 ? 's' : ''} · calidad original`);
+      if (it.lock) toast('Los adjuntos quedan ocultos tras la contraseña, pero no se cifran.', 5000);
+    } catch (e) { toast('No se pudo adjuntar: ' + (e.message || e), 4500); }
+  };
+  const mkIn = (accept, cap) => { const i = h('input', { type: 'file', multiple: true, accept, hidden: true, onchange: () => { addFiles(i.files); i.value = ''; } }); if (cap) i.setAttribute('capture', 'environment'); return i; };
+  const inM = mkIn('image/*,video/*'), inA = mkIn('*/*'), inC = mkIn('image/*,video/*', true);
+  const clipB = h('button', { class: 'icon-btn', title: 'Adjuntar fotos, videos o archivos', 'aria-label': 'Adjuntar', onclick: () => sheet('Adjuntar a la nota', [
+    { label: 'Fotos y videos', icon: 'image', run: () => inM.click() }, { label: 'Archivos (PDF, Word, etc.)', icon: 'file', run: () => inA.click() }, { label: 'Cámara', icon: 'cam', run: () => inC.click() }]) }, ic('clip', 21));
+  body.addEventListener('paste', e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
+  main.ondragover = e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); };
+  main.ondrop = e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } };
   const auto = el => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
 
   async function persist() {
     const title = titleIn.value.trim(), t = body.value, wasDraft = !!it._draft;
     if (wasDraft) {
-      if (!title && !t.trim()) return;
+      if (!title && !t.trim() && !(it.atts && it.atts.length)) return;
       delete it._draft; S.draft = null;
       if (!S.items.has(it.chatId)) S.items.set(it.chatId, []);
       S.items.get(it.chatId).push(it);
@@ -336,10 +397,11 @@ function noteView() {
 
   const dateStr = new Date(it.created).toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }) + ' · ' + fmtTime(it.created);
   const wrap = h('div', { class: 'note' },
-    h('div', { class: 'nbar' }, backBtn, h('div', { class: 'nb-center' }, compact), stat, eye, lockB, moreB),
-    h('div', { class: 'ncontent' }, h('div', { class: 'nmeta' }, dateStr, chat ? ` · ${chat.emoji} ${chat.name}` : ''), titleIn, body, prev),
-    fmt);
+    h('div', { class: 'nbar' }, backBtn, h('div', { class: 'nb-center' }, compact), stat, clipB, eye, lockB, moreB),
+    h('div', { class: 'ncontent' }, h('div', { class: 'nmeta' }, dateStr, chat ? ` · ${chat.emoji} ${chat.name}` : ''), titleIn, body, prev, attsBox),
+    fmt, h('div', { hidden: true }, inM, inA, inC));
   main.append(wrap);
+  renderAtts();
   auto(titleIn); auto(body);
 
   // animación de scroll: el título grande se pliega en la barra fija de arriba
@@ -370,7 +432,7 @@ async function setNoteLock(it, getText) {
   const body = h('div', { class: 'dlg glass' }), ov = overlay(body);
   const cancelRow = () => h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'));
   const stepLen = () => body.replaceChildren(h('h3', null, 'Contraseña de la nota'),
-    h('p', { class: 'mute' }, 'Elegí cuántos dígitos. Si la olvidás, la nota no se puede recuperar. Con 4 dígitos te protegés de curiosos; para más seguridad usá 8 o 10.'),
+    h('p', { class: 'mute' }, 'Elegí cuántos dígitos. Si la olvidás, la nota no se puede recuperar. Con 4 dígitos te protegés de curiosos; para más seguridad usá 8 o 10.' + (it.atts && it.atts.length ? ' Los adjuntos quedan ocultos tras la contraseña, pero no se cifran.' : '')),
     h('div', { class: 'seg' }, [4, 6, 8, 10].map(n => h('button', { class: 'chip' + (len === n ? ' on' : ''), onclick: () => { len = n; stepLen(); } }, n + ' dígitos'))),
     h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'), h('button', { class: 'btn', onclick: () => stepPin() }, 'Siguiente')));
   const stepPin = () => { const pad = L.pinPad({ len, sub: `Elegí ${len} dígitos`, onComplete: async p => { first = p; stepConfirm(); return true; } }); body.replaceChildren(h('h3', null, 'Nueva contraseña'), pad, cancelRow()); };
@@ -608,6 +670,7 @@ function itemMenu(it) {
     (it.text || !it.file) && { label: it.file ? 'Editar descripción' : 'Editar texto', icon: 'edit', run: () => editText(it) },
     (k === 'image' || k === 'video') && { label: k === 'image' ? 'Editar foto' : 'Editar video', icon: 'wand', run: () => editMedia(it) },
     it.text && { label: 'Copiar texto', icon: 'copy', run: () => { navigator.clipboard?.writeText(it.text); toast('Texto copiado'); } },
+    it.file && { label: 'Aumentar calidad, aspecto o comprimir', icon: 'wand', run: () => openLabFor(it, (k === 'image' || k === 'video') ? 'quality' : 'compress') },
     it.file && { label: 'Guardar / compartir archivo', icon: 'share', run: async () => { const b = await getBlob(it); if (b) saveFile(b, it.file.name); } },
     { label: it.pinned ? 'Quitar de fijados' : 'Fijar', icon: 'pin', run: async () => { it.pinned = !it.pinned; await saveItem(it); refreshNode(it); } },
     { label: 'Color de la nota', icon: 'drop', run: () => tintDialog(it) },
@@ -632,7 +695,7 @@ async function editText(it) {
 async function editMedia(it) {
   const blob = await getBlob(it); if (!blob) return;
   const k = kindOf(it.file.mime, it.file.name);
-  const onSave = async e => { it.edits = e || undefined; if (!e) delete it.edits; await saveItem(it); refreshNode(it); };
+  const onSave = async e => { it.edits = e || undefined; await saveItem(it); refreshNode(it); it._after?.(); };
   if (k === 'image') openImageEditor({ blob, name: it.file.name, edits: it.edits, onSave }).catch(e => toast(e.message || 'No se pudo abrir el editor'));
   else openVideoEditor({ blob, name: it.file.name, meta: it.file, edits: it.edits, onSave });
 }
@@ -647,6 +710,7 @@ async function openViewer(it) {
     h('b', { class: 'vtitle' }, it.file.name),
     h('div', { class: 'row gap6' },
       (k === 'image' || k === 'video') && h('button', { class: 'btn', onclick: () => { ov.close(); editMedia(it); } }, ic('wand', 18), 'Editar'),
+      h('button', { class: 'btn ghost', onclick: () => { ov.close(); openLabFor(it, (k === 'image' || k === 'video') ? 'quality' : 'compress'); } }, ic('wand', 18), 'Mejorar'),
       h('button', { class: 'btn ghost', onclick: async () => { const b = await blobP; if (!b) return; if (k === 'image' && hasEdits(it.edits)) { try { await exportImage(b, it.edits, it.file.name, 'png'); } catch (e) { toast(e.message); } } else saveFile(b, it.file.name); } }, ic('share', 18), k === 'image' && hasEdits(it.edits) ? 'Exportar' : 'Guardar')));
   const ov = overlay(h('div', { class: 'viewer' }, bar, stage), { cls: 'full' });
   const blob = await blobP; if (!blob) { stage.replaceChildren(h('p', { class: 'mute pad' }, 'Este archivo todavía no llegó a este dispositivo. Abrí Notis en el otro dispositivo y esperá a que se conecten.')); return; }
@@ -833,7 +897,7 @@ function searchView() {
     const hits = [];
     for (const c of live(S.chats)) { if (scope && c.id !== scope.id) continue;
       for (const it of chatItems(c.id)) {
-        const hay = [it.title, it.lock ? '' : it.text, it.file?.name, it.link?.title, it.link?.url].filter(Boolean).join(' ').toLowerCase();
+        const hay = [it.title, it.lock ? '' : it.text, ...(it.atts || []).map(a => a.name), it.file?.name, it.link?.title, it.link?.url].filter(Boolean).join(' ').toLowerCase();
         if (hay.includes(q)) hits.push({ c, it });
       } }
     const evs = scope ? [] : live(S.events).filter(e => (e.title + ' ' + (e.note || '')).toLowerCase().includes(q));

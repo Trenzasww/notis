@@ -9,6 +9,7 @@ Tus notas, archivos y calendario en una web app privada y gratuita. Sin servidor
 - Color por nota y por chat: contorno o vidrio de color
 - Notas completas con título fijo, texto a la izquierda y contraseña numérica opcional (4, 6, 8 o 10 dígitos, con cifrado)
 - Bloqueo de la app con PIN (4, 6, 8 o 10 dígitos) y Face ID / huella en el celular
+- Adjuntos en las notas (fotos, videos y archivos en calidad original) con herramientas para aumentar calidad, cambiar la relación de aspecto y comprimir (todo en tu dispositivo)
 
 ## Vincular tu PC y tu celu (directo, sin nube ni cuentas)
 Ajustes → "Vincular tus dispositivos". En uno tocás "Vincular un dispositivo" y aparece un código; en el otro, "Tengo un código" y lo escribís.

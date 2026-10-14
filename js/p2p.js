@@ -153,20 +153,20 @@ async function pushDiff(l, m) {
 async function requestBlobs(l) {
   if (!l.conn.open || !l.authed) return;
   const have = new Set(await DB.keys('blobs')); l.wanted ||= new Set();
-  const ids = (await DB.all('items')).filter(i => i.file && !i.deleted && !have.has(i.file.id) && !l.wanted.has(i.file.id)).map(i => i.file.id);
+  const ids = (await DB.all('items')).filter(i => !i.deleted).flatMap(i => [i.file, ...(i.atts || [])]).filter(f => f && !have.has(f.id) && !l.wanted.has(f.id)).map(f => f.id);
   if (!ids.length) return;
   ids.forEach(x => l.wanted.add(x)); send(l, { t: 'want', ids });
 }
 async function serveFile(l, id) {
-  const it = (await DB.all('items')).find(i => i.file && i.file.id === id && !i.deleted);
-  if (!it || !(await DB.get('blobs', id)) || !l.conn.open) return;
-  await sendFile(l, it.file);
+  const f = (await DB.all('items')).filter(i => !i.deleted).flatMap(i => [i.file, ...(i.atts || [])]).find(x => x && x.id === id);
+  if (!f || !(await DB.get('blobs', id)) || !l.conn.open) return;
+  await sendFile(l, f);
 }
 async function applyRecords(l, m) {
   let changed = false;
   for (const r of m.list) {
     const cur = await DB.get(m.store, r.id);
-    if (!cur || (r.updated || 0) > (cur.updated || 0)) { await DB.put(m.store, r); changed = true; if (m.store === 'items' && r.deleted && r.file) await DB.del('blobs', r.file.id); }
+    if (!cur || (r.updated || 0) > (cur.updated || 0)) { await DB.put(m.store, r); changed = true; if (m.store === 'items' && r.deleted) for (const f of [r.file, ...(r.atts || [])]) if (f) await DB.del('blobs', f.id); }
   }
   if (changed) notify();
   clearTimeout(l.wt); l.wt = setTimeout(() => requestBlobs(l), 600);

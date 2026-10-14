@@ -94,12 +94,11 @@ export async function syncNow({ quiet } = {}) {
     const have = new Set(await DB.keys('blobs'));
     let up = 0;
     for (const it of data.items) {
-      if (!it.file) continue;
-      const name = 'b_' + it.file.id;
-      if (it.deleted) { const f = files.get(name); if (f) { await api('/files/' + f.id, { method: 'DELETE' }).catch(() => {}); } await DB.del('blobs', it.file.id); continue; }
-      if (have.has(it.file.id) && !files.has(name)) {
-        const b = (await DB.get('blobs', it.file.id)).blob; set('sync', `Subiendo ${it.file.name}…`);
-        await upload(name, b); up++;
+      for (const fl of [it.file, ...(it.atts || [])]) {
+        if (!fl) continue;
+        const name = 'b_' + fl.id;
+        if (it.deleted) { const f = files.get(name); if (f) { await api('/files/' + f.id, { method: 'DELETE' }).catch(() => {}); } await DB.del('blobs', fl.id); continue; }
+        if (have.has(fl.id) && !files.has(name)) { const b = (await DB.get('blobs', fl.id)).blob; set('sync', `Subiendo ${fl.name}…`); await upload(name, b); up++; }
       }
     }
     setCfg({ last: Date.now() }); state.last = Date.now();

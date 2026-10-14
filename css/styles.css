@@ -248,7 +248,7 @@ html[data-bubble=gradient] .bubble{background:linear-gradient(135deg,var(--accen
 .hd::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 .hd.move{display:none}.hd.nw{left:-22px;top:-22px}.hd.ne{right:-22px;top:-22px}.hd.sw{left:-22px;bottom:-22px}.hd.se{right:-22px;bottom:-22px}
 .ed-tabs{display:flex;gap:8px;justify-content:center;padding:8px 12px;flex:none}
-.ed-panel{flex:none;padding:6px 14px 8px;max-height:230px;overflow:auto;display:grid;gap:8px;align-content:start}
+.ed-panel{grid-auto-rows:max-content;flex:none;padding:6px 14px 8px;max-height:230px;overflow:auto;display:grid;gap:8px;align-content:start}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}.chips .chip{flex:none}
 .presets{display:flex;gap:10px;overflow-x:auto;padding:2px 0 6px}.preset{flex:none;display:grid;gap:4px;justify-items:center;font-size:.74rem;border-radius:12px;padding:3px;border:2px solid transparent}.preset canvas{width:72px;height:72px;object-fit:cover;border-radius:9px}.preset.on{border-color:var(--accent)}
 .presets.small .preset{padding:6px 12px;background:var(--glass-soft);border-radius:999px}
@@ -392,6 +392,26 @@ body.locked #app{filter:blur(28px)}
 .pk:active{transform:scale(.88);background:var(--accent);color:var(--on)}
 .pk.ghost{background:none;border-color:transparent;box-shadow:none}
 .dlg .pin-grid{grid-template-columns:repeat(3,68px);gap:12px}.dlg .pk{width:68px;height:68px;font-size:1.5rem}
+
+/* Adjuntos y laboratorio de calidad ------------------------------------- */
+.natts{display:grid;gap:14px;margin-top:22px}
+.natts-t{font-size:.76rem;color:var(--mute);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.natt{display:grid;gap:6px;justify-items:start}
+.natt .media{border-radius:var(--r-md)}.natt .mimg{max-width:min(100%,560px);max-height:460px}
+.natt .vframe.feed{width:min(100%,560px)}.natt .vwrap{width:100%}
+.natt-bar{display:flex;align-items:center;gap:6px;color:var(--mute);width:100%;min-width:0}
+.natt-bar small{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xbar[hidden]{display:none}
+.lab .lab-stage{flex:1;min-height:0;display:grid;place-items:center;padding:8px 12px;overflow:hidden}
+.lab-img,.lab-vid{max-width:calc(100vw - 24px);max-height:calc(100dvh - 460px);border-radius:12px;object-fit:contain;background:#000}
+.lab-frame{height:min(calc(100dvh - 460px),calc((100vw - 24px)/var(--r)));width:auto;max-width:calc(100vw - 24px)}
+.lab .ed-panel{max-height:250px}
+.lab-info{padding:0 16px 4px;text-align:center;min-height:1.3em}
+.lab .xbar{margin:0 16px 6px}
+.lab-actions{padding:6px 14px 14px;justify-content:center}
+.lab>.seg{justify-content:center;padding:2px 0 6px}
+.lab .ed-tabs{flex-wrap:wrap;gap:6px}.lab .ed-tabs .chip{padding:8px 12px;font-size:.84rem}
+.lab>.seg[hidden]{display:none}
 
 /* Móvil ------------------------------------------------------------------- */
 @media(max-width:899px){
