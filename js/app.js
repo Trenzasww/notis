@@ -6,9 +6,10 @@ import { editedURL, openImageEditor, openVideoEditor, videoStyle, bindTrim, hasE
 import { buildPreview, linkCard, urlsIn } from './links.js';
 import * as Sync from './sync.js';
 import * as P2P from './p2p.js';
+import * as L from './lock.js';
 
 const COLORS = ['#FFD60A', '#FF453A', '#FF9F0A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F', '#8E8E93'];
-const S = { view: 'home', lastChat: null, chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
+const S = { view: 'home', lastChat: null, noteId: null, noteChat: null, draft: null, nk: null, _flush: null, _cancel: null, chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
 const isTouch = matchMedia('(pointer:coarse)').matches;
 
 const root = $('#app');
@@ -48,12 +49,13 @@ async function addItem(chatId, data) {
 const saveItem = async it => { await DB.save('items', it); };
 
 // ---------------------------------------------------------------- navegación
-function nav(view, chatId = null, { push = true, hl = null } = {}) {
-  S.view = view; S.chatId = view === 'chats' ? chatId : null; S.hl = hl;
-  if (push) history.pushState({ view, chatId }, '');
+function nav(view, chatId = null, { push = true, hl = null, noteId = null } = {}) {
+  if (S.view === 'note' && (view !== 'note' || noteId !== S.noteId)) { S._flush?.(); S._flush = null; S._cancel = null; S.nk = null; document.body.classList.remove('typing'); }
+  S.view = view; S.chatId = view === 'chats' ? chatId : null; S.noteChat = view === 'note' ? chatId : null; S.noteId = view === 'note' ? noteId : null; S.hl = hl;
+  if (push) history.pushState({ view, chatId, noteId }, '');
   renderAll();
 }
-addEventListener('popstate', e => { const s = e.state || { view: 'home', chatId: null }; nav(s.view, s.chatId, { push: false }); });
+addEventListener('popstate', e => { const s = e.state || { view: 'home', chatId: null }; nav(s.view, s.chatId, { push: false, noteId: s.noteId }); });
 
 function renderAll() {
   document.body.dataset.view = S.view; document.body.dataset.chat = S.chatId ? '1' : '0';
@@ -62,7 +64,7 @@ function renderAll() {
 
 // ---------------------------------------------------------------- barra lateral / pestañas
 function navBtn(v, icon, label) {
-  return h('button', { class: 'nav-b' + (S.view === v ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? S.chatId : null) }, ic(icon, 20), h('span', null, label));
+  return h('button', { class: 'nav-b' + ((S.view === v || (v === 'chats' && S.view === 'note')) ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? S.chatId : null) }, ic(icon, 20), h('span', null, label));
 }
 function syncBadge() {
   const st = P2P.state.status, cls = { ok: 'ok', sync: 'spin', err: 'bad', idle: 'idle', off: 'off' }[st] || 'off';
@@ -71,8 +73,8 @@ function syncBadge() {
 }
 function chatRow(c) {
   const items = chatItems(c.id), last = items[items.length - 1];
-  const prev = last ? (last.file ? `${FILE_ICON[kindOf(last.file.mime, last.file.name)]} ${last.text || last.file.name}` : last.text.replace(/[#*`>]/g, '').split('\n').find(l => l.trim()) || '') : 'Sin mensajes';
-  const row = h('button', { class: 'crow' + (S.chatId === c.id ? ' on' : ''), onclick: () => nav('chats', c.id) },
+  const prev = last ? (last.type === 'note' ? ((last.title || 'Nota') + (last.lock ? ' · bloqueada' : '')) : last.file ? `${FILE_ICON[kindOf(last.file.mime, last.file.name)]} ${last.text || last.file.name}` : last.text.replace(/[#*`>]/g, '').split('\n').find(l => l.trim()) || '') : 'Sin mensajes';
+  const row = h('button', { class: 'crow' + ((S.chatId === c.id || S.noteChat === c.id) ? ' on' : ''), onclick: () => nav('chats', c.id) },
     h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji),
     h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name, c.pinned && h('i', { class: 'pinned-i' }, ic('pin', 12))), h('span', { class: 'cprev' }, prev)),
     h('span', { class: 'ctime' }, last ? shortWhen(last.created) : ''));
@@ -95,7 +97,7 @@ function renderSide() {
   side.replaceChildren(
     h('div', { class: 'side-head' },
       h('div', { class: 'brand' }, h('span', { class: 'logo' }, ic('note', 20)), h('div', { class: 'btxt' }, h('b', null, 'Notis'), h('small', null, settings.name || 'Espacio personal'))),
-      h('div', { class: 'row gap6' }, modeBtn(), h('span', { class: 'm-only' }, syncBadge()))),
+      h('div', { class: 'row gap6' }, modeBtn(), lockBtn(), h('span', { class: 'm-only' }, syncBadge()))),
     h('div', { class: 'm-title m-only' }, 'Chats'),
     h('label', { class: 'search-box' }, ic('search', 18), search, h('kbd', { class: 'd-only' }, '⌘K')),
     h('div', { class: 'd-only' }, h('div', { class: 'sec-l' }, 'Menú principal'),
@@ -112,7 +114,7 @@ const fab = h('button', { class: 'fab', title: 'Crear', 'aria-label': 'Crear', o
 root.append(fab);
 function createMenu() {
   sheet('Crear', [
-    { label: 'Nota rápida', icon: 'note', run: () => quickAdd('note') }, { label: 'Checklist', icon: 'list', run: () => quickAdd('check') },
+    { label: 'Nueva nota', icon: 'note', run: () => quickAdd('note') }, { label: 'Checklist', icon: 'list', run: () => quickAdd('check') },
     { label: 'Foto, video o archivo', icon: 'image', run: () => quickAdd('file') }, { label: 'Evento en el calendario', icon: 'cal', run: () => eventDialog(null, S.calSel) },
     { label: 'Nuevo chat', icon: 'chat', run: () => chatDialog() }]);
 }
@@ -150,7 +152,7 @@ function tintDialog(it) {
     h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'),
       h('button', { class: 'btn', onclick: async () => {
         const t = pk.get(); if (t.c && t.m !== 'none') it.tint = { c: t.c, m: t.m }; else delete it.tint;
-        await saveItem(it); ov.close(); refreshNode(it);
+        await saveItem(it); ov.close(); refreshNode(it); if (S.view === 'note') renderMain();
       } }, 'Guardar'))));
 }
 
@@ -178,8 +180,8 @@ function chatDialog(chat) {
 
 // ---------------------------------------------------------------- vista principal
 function renderMain() {
-  main.replaceChildren(); S._refreshFeed = null; delete main.dataset.tint; main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
-  ({ home: homeView, chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
+  main.replaceChildren(); main.onscroll = null; S._refreshFeed = null; document.body.classList.remove('typing'); delete main.dataset.tint; main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
+  ({ home: homeView, note: noteView, chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
 }
 
 // ---------------------------------------------------------------- vincular dispositivos (directo, sin nube)
@@ -247,6 +249,202 @@ function pairJoinDialog(prefill = '') {
   setTimeout(() => code.focus(), 120);
 }
 
+// ---------------------------------------------------------------- NOTAS COMPLETAS (título, texto a la izquierda, contraseña numérica)
+const findNote = id => (S.draft && S.draft.id === id) ? S.draft : live([...S.items.values()].flat()).find(i => i.id === id);
+const excerpt = t => (t || '').replace(/^#+\s*/gm, '').replace(/[*`>]|- \[[ x]\]\s?/g, '').replace(/\s+/g, ' ').trim().slice(0, 160);
+const openNote = it => nav('note', it.chatId, { noteId: it.id });
+function lockBtn() {
+  return L.enabled() ? h('button', { class: 'icon-btn', title: 'Bloquear Notis ahora', 'aria-label': 'Bloquear Notis', onclick: () => L.lockNow() }, ic('lock', 20)) : null;
+}
+function noteCard(it) {
+  return h('button', { class: 'ncard', onclick: () => openNote(it) },
+    h('div', { class: 'nc-t' }, it.lock ? ic('lock', 15) : null, it.title || 'Sin título'),
+    it.lock ? h('div', { class: 'nc-p mute' }, `Protegida con contraseña de ${it.lock.len} dígitos`) : (it.text ? h('div', { class: 'nc-p' }, excerpt(it.text)) : null));
+}
+function newNote(chatId, prefill = '') {
+  const cid = chatId || S.chatId || S.noteChat || ((S.lastChat && chatById(S.lastChat)) ? S.lastChat : sortedChats()[0]?.id);
+  if (!cid) return chatDialog();
+  S.lastChat = cid;
+  S.draft = { id: DB.uid(), chatId: cid, type: 'note', title: '', text: prefill, created: Date.now(), pinned: false, _draft: true };
+  nav('note', cid, { noteId: S.draft.id });
+}
+function noteMenu(it) {
+  sheet(it.title || 'Nota', [
+    { label: 'Abrir', icon: 'note', run: () => openNote(it) },
+    { label: 'Color de la nota', icon: 'drop', run: () => tintDialog(it) },
+    { label: it.pinned ? 'Quitar de fijados' : 'Fijar', icon: 'pin', run: async () => { it.pinned = !it.pinned; await saveItem(it); refreshNode(it); } },
+    { label: 'Mover a otro chat', icon: 'chat', run: () => moveItem(it) },
+    { label: 'Eliminar', icon: 'trash', danger: true, run: async () => { if (await confirmBox('¿Eliminar nota?', `Se borra "${it.title || 'Sin título'}".`)) { await DB.remove('items', it); $(`.msg[data-id="${it.id}"]`)?.remove(); renderSide(); } } }]);
+}
+
+function noteView() {
+  const it = findNote(S.noteId);
+  if (!it) { nav('home', null, { push: false }); return; }
+  const chat = chatById(it.chatId);
+  main.dataset.tint = it.tint && it.tint.m !== 'none' ? it.tint.m : 'none'; main.style.setProperty('--tc', it.tint?.c || 'transparent');
+  const back = () => (history.length > 1 ? history.back() : nav('chats', it.chatId));
+  const backBtn = h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: back }, ic('back', 24));
+  if (it.lock && !(S.nk && S.nk.id === it.id)) return lockedNote(it, backBtn);
+
+  let mode = 'write', saveT;
+  const text0 = it.lock ? S.nk.text : it.text;
+  const stat = h('span', { class: 'nstat' }, '');
+  const compact = h('b', { class: 'nb-title' }, it.title || 'Nota');
+  const titleIn = h('textarea', { class: 'ntitle', rows: 1, placeholder: 'Título', maxLength: 140 }); titleIn.value = it.title || '';
+  const body = h('textarea', { class: 'nbody', placeholder: 'Escribí acá…' }); body.value = text0 || '';
+  const prev = h('div', { class: 'npreview', hidden: true });
+  const auto = el => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+
+  async function persist() {
+    const title = titleIn.value.trim(), t = body.value, wasDraft = !!it._draft;
+    if (wasDraft) {
+      if (!title && !t.trim()) return;
+      delete it._draft; S.draft = null;
+      if (!S.items.has(it.chatId)) S.items.set(it.chatId, []);
+      S.items.get(it.chatId).push(it);
+    }
+    it.title = title;
+    if (it.lock && S.nk && S.nk.id === it.id) { const e = await L.encryptText(S.nk.key, t); it.lock = { ...it.lock, iv: e.iv, ct: e.ct }; it.text = ''; S.nk.text = t; }
+    else if (!it.lock) it.text = t;
+    await DB.save('items', it);
+    stat.textContent = 'Guardado'; if (wasDraft) renderSide();
+  }
+  const queue = () => { stat.textContent = 'Guardando…'; clearTimeout(saveT); saveT = setTimeout(persist, 500); };
+  S._flush = () => { clearTimeout(saveT); return persist(); };
+  S._cancel = () => clearTimeout(saveT);
+  titleIn.addEventListener('input', () => { auto(titleIn); compact.textContent = titleIn.value.trim() || 'Nota'; queue(); });
+  titleIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); body.focus(); } });
+  body.addEventListener('input', () => { auto(body); queue(); });
+
+  const wrapSel = (a, b = a) => { const s = body.selectionStart, e = body.selectionEnd; body.setRangeText(a + (body.value.slice(s, e) || 'texto') + b, s, e, 'select'); body.focus(); auto(body); queue(); };
+  const linePre = p => { const s = body.selectionStart, st = body.value.lastIndexOf('\n', s - 1) + 1; body.setRangeText(p, st, st, 'end'); body.focus(); auto(body); queue(); };
+  const fmt = h('div', { class: 'nfmt' }, [['T', 'Título', () => linePre('# ')], ['B', 'Negrita', () => wrapSel('**')], ['I', 'Cursiva', () => wrapSel('*')], ['•', 'Lista', () => linePre('- ')], ['☑', 'Checklist', () => linePre('- [ ] ')], ['❝', 'Cita', () => linePre('> ')], ['</>', 'Código', () => wrapSel('`')]]
+    .map(([l, t, f]) => h('button', { class: 'fmt', title: t, onmousedown: e => e.preventDefault(), onclick: f }, l)));
+
+  const renderPrev = () => prev.replaceChildren(richText(body.value || '*Nota vacía*', {
+    onTag: t => { S.q = t; nav('search'); },
+    onToggle: (i, d) => { const ls = body.value.split('\n'); ls[i] = ls[i].replace(/\[( |x|X)\]/, d ? '[x]' : '[ ]'); body.value = ls.join('\n'); queue(); renderPrev(); } }));
+  const eye = h('button', { class: 'icon-btn', title: 'Vista previa', 'aria-label': 'Alternar vista previa', onclick: () => {
+    mode = mode === 'write' ? 'read' : 'write';
+    if (mode === 'read') renderPrev();
+    body.hidden = mode === 'read'; prev.hidden = mode !== 'read'; fmt.hidden = mode === 'read'; eye.classList.toggle('on', mode === 'read');
+  } }, ic('eye', 21));
+
+  const lockB = h('button', { class: 'icon-btn' + (it.lock ? ' on' : ''), title: it.lock ? 'Nota con contraseña' : 'Ponerle contraseña', 'aria-label': 'Contraseña de la nota',
+    onclick: () => it.lock ? lockMenu(it, () => body.value) : setNoteLock(it, () => body.value) }, ic(it.lock ? 'lock' : 'unlock', 21));
+  const moreB = h('button', { class: 'icon-btn', 'aria-label': 'Más opciones', onclick: () => noteMore(it, back, () => body.value) }, ic('more', 22));
+
+  const dateStr = new Date(it.created).toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }) + ' · ' + fmtTime(it.created);
+  const wrap = h('div', { class: 'note' },
+    h('div', { class: 'nbar' }, backBtn, h('div', { class: 'nb-center' }, compact), stat, eye, lockB, moreB),
+    h('div', { class: 'ncontent' }, h('div', { class: 'nmeta' }, dateStr, chat ? ` · ${chat.emoji} ${chat.name}` : ''), titleIn, body, prev),
+    fmt);
+  main.append(wrap);
+  auto(titleIn); auto(body);
+
+  // animación de scroll: el título grande se pliega en la barra fija de arriba
+  main.onscroll = () => wrap.style.setProperty('--p', Math.min(1, Math.max(0, (main.scrollTop - 6) / 70)).toFixed(3));
+  // en el celu, la barra de abajo se esconde mientras escribís con el teclado
+  const typing = on => document.body.classList.toggle('typing', on);
+  wrap.addEventListener('focusin', e => { if (e.target.matches('.ntitle,.nbody')) typing(true); });
+  wrap.addEventListener('focusout', () => setTimeout(() => { if (!document.activeElement || !document.activeElement.matches('.ntitle,.nbody')) typing(false); }, 80));
+  // nota nueva: se abre lista para escribir
+  if (it._draft || (!it.title && !text0)) setTimeout(() => titleIn.focus(), 150);
+}
+
+function lockedNote(it, backBtn) {
+  const pad = L.pinPad({ len: it.lock.len, sub: 'Ingresá la contraseña de la nota', onComplete: async pin => {
+    try { const key = await L.deriveKey(pin, it.lock.salt); const text = await L.decryptText(key, it.lock); S.nk = { id: it.id, key, text }; renderMain(); return true; }
+    catch { pad.say('Contraseña incorrecta'); return false; }
+  } });
+  main.append(h('div', { class: 'note locked' },
+    h('div', { class: 'nbar on' }, backBtn, h('div', { class: 'nb-center' }, h('b', { class: 'nb-title' }, it.title || 'Nota'))),
+    h('div', { class: 'lock-in' }, h('span', { class: 'logo xl' }, ic('lock', 30)), h('h2', null, it.title || 'Nota bloqueada'), pad)));
+}
+
+async function setNoteLock(it, getText) {
+  await S._flush?.();
+  if (it._draft) return toast('Escribí algo antes de ponerle contraseña');
+  const currentText = getText();
+  let len = 4, first = '';
+  const body = h('div', { class: 'dlg glass' }), ov = overlay(body);
+  const cancelRow = () => h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'));
+  const stepLen = () => body.replaceChildren(h('h3', null, 'Contraseña de la nota'),
+    h('p', { class: 'mute' }, 'Elegí cuántos dígitos. Si la olvidás, la nota no se puede recuperar. Con 4 dígitos te protegés de curiosos; para más seguridad usá 8 o 10.'),
+    h('div', { class: 'seg' }, [4, 6, 8, 10].map(n => h('button', { class: 'chip' + (len === n ? ' on' : ''), onclick: () => { len = n; stepLen(); } }, n + ' dígitos'))),
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'), h('button', { class: 'btn', onclick: () => stepPin() }, 'Siguiente')));
+  const stepPin = () => { const pad = L.pinPad({ len, sub: `Elegí ${len} dígitos`, onComplete: async p => { first = p; stepConfirm(); return true; } }); body.replaceChildren(h('h3', null, 'Nueva contraseña'), pad, cancelRow()); };
+  const stepConfirm = () => { const pad = L.pinPad({ len, sub: 'Repetila para confirmar', onComplete: async p => { if (p !== first) { pad.say('No coincide, probá de nuevo'); return false; } await apply(p); return true; } }); body.replaceChildren(h('h3', null, 'Confirmá la contraseña'), pad, cancelRow()); };
+  async function apply(pin) {
+    const salt = L.newSalt(), key = await L.deriveKey(pin, salt), e = await L.encryptText(key, currentText);
+    it.lock = { v: 1, len, salt, iv: e.iv, ct: e.ct }; it.text = ''; S.nk = { id: it.id, key, text: currentText };
+    await DB.save('items', it); ov.close(); toast('Nota protegida'); renderMain();
+  }
+  stepLen();
+}
+function lockMenu(it, getText) {
+  sheet('Nota con contraseña', [
+    { label: 'Cambiar contraseña', icon: 'lock', run: () => setNoteLock(it, getText) },
+    { label: 'Quitar contraseña', icon: 'unlock', danger: true, run: async () => {
+      if (!(await confirmBox('¿Quitar la contraseña?', 'La nota va a quedar visible para cualquiera que abra Notis.', 'Quitar'))) return;
+      const t = getText(); delete it.lock; it.text = t; S.nk = null; await DB.save('items', it); toast('Contraseña quitada'); renderMain();
+    } }]);
+}
+function noteMore(it, back, getText) {
+  sheet(it.title || 'Nota', [
+    { label: 'Color de la nota', icon: 'drop', run: () => { if (it._draft) return toast('Escribí algo primero'); tintDialog(it); } },
+    !it._draft && { label: it.pinned ? 'Quitar de fijados' : 'Fijar', icon: 'pin', run: async () => { it.pinned = !it.pinned; await saveItem(it); toast(it.pinned ? 'Nota fijada' : 'Nota desfijada'); } },
+    !it._draft && { label: 'Mover a otro chat', icon: 'chat', run: () => moveItem(it) },
+    { label: 'Exportar como texto', icon: 'dl', run: () => saveFile(new Blob([`${it.title || ''}\n\n${getText()}`], { type: 'text/plain' }), (it.title || 'nota').replace(/[^\p{L}\d _-]/gu, '') + '.txt') },
+    { label: 'Eliminar nota', icon: 'trash', danger: true, run: async () => {
+      if (!(await confirmBox('¿Eliminar nota?', `Se borra "${it.title || 'Sin título'}".`))) return;
+      S._cancel?.(); S._flush = null; if (it._draft) { S.draft = null; } else await DB.remove('items', it);
+      renderSide(); back();
+    } }]);
+}
+
+// ---------------------------------------------------------------- SEGURIDAD (PIN de la app + Face ID)
+function pinVerify(onOk) {
+  const c = L.cfg(); const body = h('div', { class: 'dlg glass' }), ov = overlay(body);
+  const pad = L.pinPad({ len: c.len || 4, sub: 'Ingresá tu PIN actual', onComplete: async p => { if (await L.checkPin(p)) { ov.close(); onOk(); return true; } pad.say('PIN incorrecto'); return false; } });
+  body.append(h('h3', null, 'Confirmá tu PIN'), pad, h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar')));
+}
+function pinSetup(re) {
+  let len = L.cfg().len || 4, first = '';
+  const body = h('div', { class: 'dlg glass' }), ov = overlay(body);
+  const cancelRow = () => h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'));
+  const stepLen = () => body.replaceChildren(h('h3', null, 'PIN de Notis'),
+    h('p', { class: 'mute' }, 'Se pide al abrir la app en este dispositivo. Elegí la cantidad de dígitos.'),
+    h('div', { class: 'seg' }, [4, 6, 8, 10].map(n => h('button', { class: 'chip' + (len === n ? ' on' : ''), onclick: () => { len = n; stepLen(); } }, n + ' dígitos'))),
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'), h('button', { class: 'btn', onclick: () => stepPin() }, 'Siguiente')));
+  const stepPin = () => { const pad = L.pinPad({ len, sub: `Elegí ${len} dígitos`, onComplete: async p => { first = p; stepConfirm(); return true; } }); body.replaceChildren(h('h3', null, 'Nuevo PIN'), pad, cancelRow()); };
+  const stepConfirm = () => { const pad = L.pinPad({ len, sub: 'Repetilo para confirmar', onComplete: async p => {
+    if (p !== first) { pad.say('No coincide, probá de nuevo'); return false; }
+    await L.setPin(p, len); ov.close(); toast('PIN activado'); re();
+    if (await L.bioAvailable() && !L.cfg().bio && await confirmBox(`¿Usar ${L.bioLabel()}?`, 'Podés desbloquear Notis con tu rostro o huella. El PIN sigue siendo la alternativa.', 'Activar')) {
+      try { await L.bioRegister(); toast(`${L.bioLabel()} activado`); re(); } catch (e) { toast('No se pudo activar: ' + (e.message || e), 4000); }
+    }
+    return true; } }); body.replaceChildren(h('h3', null, 'Confirmá el PIN'), pad, cancelRow()); };
+  stepLen();
+}
+function securityCard(re) {
+  const c = L.cfg(), on = L.enabled(), bioBox = h('div', { class: 'stack' });
+  if (on) L.bioAvailable().then(ok => { if (!ok) return;
+    bioBox.replaceChildren(h('label', { class: 'tog' }, h('span', null, h('b', null, `Usar ${L.bioLabel()}`), h('small', { class: 'mute' }, 'Desbloqueás con tu rostro o huella. El PIN sigue siendo la alternativa.')),
+      h('input', { type: 'checkbox', checked: !!L.cfg().bio, onchange: async e => {
+        try { if (e.target.checked) await L.bioRegister(); else L.bioOff(); toast(e.target.checked ? 'Activado' : 'Desactivado'); }
+        catch (err) { e.target.checked = false; toast('No se pudo activar: ' + (err.message || err), 4000); } } }), h('i'))); });
+  return h('section', { class: 'card glass' }, h('h3', null, 'Seguridad'),
+    h('p', { class: 'mute' }, 'Bloqueá Notis con un PIN en este dispositivo. En el celular podés usar Face ID o tu huella. Cada dispositivo tiene su propio PIN y no se sincroniza.'),
+    h('label', { class: 'tog' }, h('span', null, h('b', null, 'Pedir PIN al abrir'), h('small', { class: 'mute' }, on ? `PIN de ${c.len} dígitos activo` : 'Desactivado')),
+      h('input', { type: 'checkbox', checked: on, onchange: e => { if (e.target.checked) { e.target.checked = false; pinSetup(re); } else { e.target.checked = true; pinVerify(() => { L.disable(); toast('Bloqueo desactivado'); re(); }); } } }), h('i')),
+    on ? bioBox : null,
+    on ? h('div', { class: 'lbl' }, 'Bloquear automáticamente') : null,
+    on ? seg([['0', 'Al salir'], ['1', '1 min'], ['5', '5 min'], ['never', 'Solo al abrir']], c.auto ?? '0', v => { L.setAuto(v); re(); }) : null,
+    on ? h('div', { class: 'row gap wrap' }, h('button', { class: 'btn ghost', onclick: () => pinVerify(() => pinSetup(re)) }, 'Cambiar PIN'), h('button', { class: 'btn ghost', onclick: () => L.lockNow() }, ic('lock', 18), 'Bloquear ahora')) : null,
+    h('p', { class: 'mute small' }, 'Las notas con contraseña numérica se cifran: su texto no se puede leer sin la contraseña, ni siquiera desde otro dispositivo vinculado.'));
+}
+
 // ---------------------------------------------------------------- INICIO
 function homeView() {
   const now = new Date(), hr = now.getHours(), g = hr < 6 ? 'Buenas noches' : hr < 13 ? 'Buen día' : hr < 20 ? 'Buenas tardes' : 'Buenas noches';
@@ -264,13 +462,13 @@ function homeView() {
       const img = h('img', { alt: '' }); imageURL(it, 500).then(u => u && (img.src = u));
       return h('button', { class: 'rcard img', onclick: () => nav('chats', it.chatId, { hl: it.id }) }, img, head);
     }
-    const txt = it.text ? it.text.replace(/[#*`>]|- \[[ x]\]/g, '').trim() : it.file ? `${FILE_ICON[k]} ${it.file.name}` : '';
+    const txt = it.type === 'note' ? ((it.title || 'Sin título') + (it.lock ? ' · bloqueada' : it.text ? ' — ' + excerpt(it.text) : '')) : it.text ? it.text.replace(/[#*`>]|- \[[ x]\]/g, '').trim() : it.file ? `${FILE_ICON[k]} ${it.file.name}` : '';
     return h('button', { class: 'rcard', onclick: () => nav('chats', it.chatId, { hl: it.id }) }, head, h('p', null, txt));
   };
   const evRow = e => h('button', { class: 'ev', onclick: () => { S.calSel = e.date; S.calMonth = new Date(e.date + 'T12:00'); nav('calendar'); } }, h('i', { class: 'evbar', style: { background: e.color } }),
     h('span', { class: 'evinfo' }, h('b', null, e.title), h('small', { class: 'mute' }, [new Date(e.date + 'T12:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }), e.time || 'Todo el día'].join(' · '))));
   main.append(h('div', { class: 'page home' },
-    h('div', { class: 'hello' }, h('div', null, h('small', { class: 'mute caps' }, dateStr), h('h1', null, g, settings.name ? ', ' : '', settings.name ? h('span', { class: 'acc' }, settings.name) : null)), h('div', { class: 'row gap6 m-only' }, modeBtn(), syncBadge())),
+    h('div', { class: 'hello' }, h('div', null, h('small', { class: 'mute caps' }, dateStr), h('h1', null, g, settings.name ? ', ' : '', settings.name ? h('span', { class: 'acc' }, settings.name) : null)), h('div', { class: 'row gap6 m-only' }, modeBtn(), lockBtn(), syncBadge())),
     h('button', { class: 'search-big', onclick: () => { S.q = ''; S.qChat = ''; nav('search'); } }, ic('search', 19), 'Buscar notas, archivos, links…'),
     h('div', { class: 'quick' }, [['note', 'Nota', () => quickAdd('note')], ['list', 'Checklist', () => quickAdd('check')], ['image', 'Archivo', () => quickAdd('file')], ['cal', 'Evento', () => eventDialog(null, today)]]
       .map(([i, l, f]) => h('button', { class: 'qtile', onclick: f }, h('span', { class: 'qic' }, ic(i, 22)), h('span', null, l)))),
@@ -280,6 +478,8 @@ function homeView() {
     pinned.length ? [h('div', { class: 'sec' }, h('span', null, 'Chats fijados')), h('div', { class: 'card glass evlist' }, pinned.map(chatRow))] : null));
 }
 function quickAdd(kind = 'note') {
+  if (kind === 'note') return newNote();
+  if (kind === 'check') return newNote(null, '- [ ] ');
   let chat = (S.lastChat && chatById(S.lastChat)) || sortedChats()[0]; if (!chat) return chatDialog();
   const files = [];
   const chips = h('div', { class: 'chips' });
@@ -379,8 +579,9 @@ function textBody(it) { return richText(it.text, { onTag: t => { S.q = t; nav('s
 function itemNode(it) {
   const bubble = h('div', { class: 'bubble' + (it.pinned ? ' pinned' : '') });
   applyTint(bubble, it.tint);
-  if (it.file) bubble.append(fileBody(it));
-  if (it.text) bubble.append(textBody(it));
+  if (it.type === 'note') bubble.append(noteCard(it));
+  else if (it.file) bubble.append(fileBody(it));
+  if (it.text && it.type !== 'note') bubble.append(textBody(it));
   if (it.link) bubble.append(linkCard(it.link));
   const row = h('div', { class: 'msg', 'data-id': it.id },
     h('div', { class: 'mwrap' }, bubble,
@@ -401,6 +602,7 @@ async function attachLinkPreview(it) {
 }
 
 function itemMenu(it) {
+  if (it.type === 'note') return noteMenu(it);
   const k = it.file ? kindOf(it.file.mime, it.file.name) : null;
   sheet(null, [
     (it.text || !it.file) && { label: it.file ? 'Editar descripción' : 'Editar texto', icon: 'edit', run: () => editText(it) },
@@ -520,6 +722,7 @@ function chatView() {
     h('div', { class: 'crow2' },
       h('button', { class: 'icon-btn', title: 'Adjuntar', onclick: () => sheet('Adjuntar', [
         { label: 'Fotos y videos', icon: 'image', run: () => inMedia.click() }, { label: 'Archivos (PDF, Word, etc.)', icon: 'file', run: () => inAny.click() }, { label: 'Cámara', icon: 'cam', run: () => inCam.click() }]) }, ic('clip', 22)),
+      h('button', { class: 'icon-btn', title: 'Nota completa con título', onclick: () => newNote(chat.id) }, ic('note', 22)),
       ta,
       h('button', { class: 'icon-btn', title: 'Emojis', onclick: () => { pop.hidden = !pop.hidden; } }, ic('smile', 22)),
       h('button', { class: 'send', title: 'Enviar', onclick: send }, ic('send', 20)), inMedia, inAny, inCam));
@@ -630,7 +833,7 @@ function searchView() {
     const hits = [];
     for (const c of live(S.chats)) { if (scope && c.id !== scope.id) continue;
       for (const it of chatItems(c.id)) {
-        const hay = [it.text, it.file?.name, it.link?.title, it.link?.url].filter(Boolean).join(' ').toLowerCase();
+        const hay = [it.title, it.lock ? '' : it.text, it.file?.name, it.link?.title, it.link?.url].filter(Boolean).join(' ').toLowerCase();
         if (hay.includes(q)) hits.push({ c, it });
       } }
     const evs = scope ? [] : live(S.events).filter(e => (e.title + ' ' + (e.note || '')).toLowerCase().includes(q));
@@ -638,9 +841,9 @@ function searchView() {
     if (!hits.length && !evs.length && !chats.length) return out.append(h('p', { class: 'mute pad' }, 'Sin resultados.'));
     if (chats.length) out.append(h('h3', { class: 'sec' }, 'Chats'), ...chats.map(c => h('button', { class: 'crow', onclick: () => nav('chats', c.id) }, h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji), h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name)))));
     if (hits.length) out.append(h('h3', { class: 'sec' }, `Mensajes (${hits.length})`), ...hits.sort((a, b) => b.it.created - a.it.created).slice(0, 80).map(({ c, it }) => {
-      const t = it.text || it.file?.name || it.link?.title || '', i = Math.max(0, t.toLowerCase().indexOf(q)), snip = t.slice(Math.max(0, i - 30), i + 90).replace(/\n/g, ' ');
+      const t = it.title || it.text || it.file?.name || it.link?.title || '', i = Math.max(0, t.toLowerCase().indexOf(q)), snip = t.slice(Math.max(0, i - 30), i + 90).replace(/\n/g, ' ');
       return h('button', { class: 'crow', onclick: () => nav('chats', c.id, { hl: it.id }) }, h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji),
-        h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, it.file ? FILE_ICON[kindOf(it.file.mime, it.file.name)] + ' ' + (it.file.name) : c.name), h('span', { class: 'cprev' }, snip)), h('span', { class: 'ctime' }, shortWhen(it.created)));
+        h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, it.type === 'note' ? 'Nota · ' + (it.title || 'Sin título') + (it.lock ? ' (bloqueada)' : '') : it.file ? FILE_ICON[kindOf(it.file.mime, it.file.name)] + ' ' + (it.file.name) : c.name), h('span', { class: 'cprev' }, snip)), h('span', { class: 'ctime' }, shortWhen(it.created)));
     }));
     if (evs.length) out.append(h('h3', { class: 'sec' }, 'Eventos'), ...evs.map(e => h('button', { class: 'ev', onclick: () => { S.calSel = e.date; S.calMonth = new Date(e.date + 'T12:00'); nav('calendar'); } }, h('i', { class: 'evbar', style: { background: e.color } }), h('span', { class: 'evinfo' }, h('b', null, e.title), h('small', { class: 'mute' }, e.date)))));
   };
@@ -710,6 +913,8 @@ function settingsView() {
           h('li', null, 'En "Orígenes autorizados de JavaScript" poné la dirección donde publiques esta web (ej: ', h('code', null, location.origin), ').'),
           h('li', null, 'Copiá el Client ID, pegalo arriba y tocá Conectar. Repetí "Conectar" en cada dispositivo.')))),
 
+    securityCard(re),
+
     h('section', { class: 'card glass' }, h('h3', null, 'Almacenamiento y datos'), storage,
       h('div', { class: 'row gap wrap' }, persistBtn,
         h('button', { class: 'btn ghost', onclick: exportBackup }, ic('dl', 18), 'Copia de seguridad'),
@@ -736,8 +941,10 @@ async function importBackup(file) {
 // ---------------------------------------------------------------- arranque
 async function boot() {
   try {
+    L.watch();
+    if (L.enabled()) await L.showLock();
     await loadAll(); await seed();
-    const s = history.state; if (s?.view) { S.view = s.view; S.chatId = s.chatId; } else history.replaceState({ view: 'home', chatId: null }, '');
+    const s = history.state; if (s?.view) { S.view = s.view; S.chatId = s.chatId; S.noteId = s.noteId || null; S.noteChat = s.view === 'note' ? s.chatId : null; if (s.view === 'note' && !findNote(S.noteId)) S.view = 'home'; } else history.replaceState({ view: 'home', chatId: null }, '');
     renderAll();
     navigator.storage?.persist?.();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

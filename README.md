@@ -7,6 +7,8 @@ Tus notas, archivos y calendario en una web app privada y gratuita. Sin servidor
 - Editor de fotos (recorte, relación de aspecto, zoom, giro, filtros) y de videos (recorte de tramo, encuadre, mute)
 - Calendario, buscador y 64 paletas (blanco y negro por defecto, modo claro/oscuro)
 - Color por nota y por chat: contorno o vidrio de color
+- Notas completas con título fijo, texto a la izquierda y contraseña numérica opcional (4, 6, 8 o 10 dígitos, con cifrado)
+- Bloqueo de la app con PIN (4, 6, 8 o 10 dígitos) y Face ID / huella en el celular
 
 ## Vincular tu PC y tu celu (directo, sin nube ni cuentas)
 Ajustes → "Vincular tus dispositivos". En uno tocás "Vincular un dispositivo" y aparece un código; en el otro, "Tengo un código" y lo escribís.
