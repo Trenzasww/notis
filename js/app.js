@@ -5,6 +5,7 @@ import { emojiPicker } from './emoji.js';
 import { editedURL, openImageEditor, openVideoEditor, videoStyle, bindTrim, hasEdits, exportImage } from './media.js';
 import { buildPreview, linkCard, urlsIn } from './links.js';
 import * as Sync from './sync.js';
+import * as P2P from './p2p.js';
 
 const COLORS = ['#FFD60A', '#FF453A', '#FF9F0A', '#30D158', '#64D2FF', '#0A84FF', '#BF5AF2', '#FF375F', '#8E8E93'];
 const S = { view: 'home', lastChat: null, chatId: null, chats: [], events: [], items: new Map(), pending: [], drafts: {}, hl: null, sideQ: '', q: '', qChat: '', calMonth: new Date(), calSel: ymd(new Date()), palQ: '' };
@@ -28,13 +29,14 @@ async function loadAll() {
 }
 async function seed() {
   if (S.chats.length) return;
-  const base = [['📝', 'Mis notas', null], ['📚', 'Parciales', null], ['🖼️', 'Fotos y videos', null], ['🔗', 'Links', null]];
+  const base = [['📝', 'Mis notas'], ['📚', 'Parciales'], ['🖼️', 'Fotos y videos'], ['🔗', 'Links']];
   for (let i = 0; i < base.length; i++) {
-    const c = { id: DB.uid(), name: base[i][1], emoji: base[i][0], color: base[i][2], tint: 'none', created: Date.now() + i, pinned: false };
-    await DB.save('chats', c); S.chats.push(c);
+    const c = { id: 'seed-c' + i, name: base[i][1], emoji: base[i][0], color: null, tint: 'none', created: Date.now() + i, pinned: false, updated: 1 };
+    await DB.put('chats', c); S.chats.push(c);
   }
-  const first = S.chats[0];
-  await addItem(first.id, { type: 'text', text: '# Bienvenido a Notis\nEste es tu espacio privado. Escribí notas, subí fotos, videos, PDF y links.\n\n- [x] Crear mi primer chat\n- [ ] Elegir mi paleta en **Ajustes**\n- [ ] Subir una foto\n\nUsá #etiquetas para encontrar todo rápido.' });
+  const w = { id: 'seed-welcome', chatId: 'seed-c0', type: 'text', created: Date.now(), pinned: false, updated: 1,
+    text: '# Bienvenido a Notis\nEste es tu espacio privado. Escribí notas, subí fotos, videos, PDF y links.\n\n- [x] Crear mi primer chat\n- [ ] Elegir mi paleta en **Ajustes**\n- [ ] Vincular mi celu con mi PC\n\nUsá #etiquetas para encontrar todo rápido.' };
+  await DB.put('items', w); S.items.set('seed-c0', [w]);
 }
 async function addItem(chatId, data) {
   const it = { id: DB.uid(), chatId, type: 'text', text: '', created: Date.now(), pinned: false, ...data };
@@ -63,9 +65,9 @@ function navBtn(v, icon, label) {
   return h('button', { class: 'nav-b' + (S.view === v ? ' on' : ''), onclick: () => nav(v, v === 'chats' ? S.chatId : null) }, ic(icon, 20), h('span', null, label));
 }
 function syncBadge() {
-  const st = Sync.state.status, cls = { ok: 'ok', sync: 'spin', err: 'bad', idle: 'ok', off: 'off' }[st] || 'off';
-  const title = { ok: 'Sincronizado', sync: 'Sincronizando…', err: 'Error de sincronización', idle: 'Conectado', off: 'Sin sincronizar (tocá para configurar)' }[st];
-  return h('button', { class: 'icon-btn sync ' + cls, title, onclick: () => nav('settings') }, ic('cloud', 20));
+  const st = P2P.state.status, cls = { ok: 'ok', sync: 'spin', err: 'bad', idle: 'idle', off: 'off' }[st] || 'off';
+  const title = { ok: 'Dispositivos conectados', sync: 'Pasando archivos…', err: 'Error de conexión', idle: 'Vinculado: esperando al otro dispositivo', off: 'Sin vincular (tocá para configurar)' }[st];
+  return h('button', { class: 'icon-btn sync ' + cls, title, onclick: () => nav('settings') }, ic('link', 20));
 }
 function chatRow(c) {
   const items = chatItems(c.id), last = items[items.length - 1];
@@ -78,11 +80,11 @@ function chatRow(c) {
   return row;
 }
 function syncCard() {
-  const on = Sync.isConnected();
+  const paired = P2P.isPaired();
   return h('div', { class: 'syncard' },
-    h('b', null, ic('cloud', 18), on ? 'Drive conectado' : 'Sincronizá tus dispositivos'),
-    h('p', null, on ? (Sync.state.msg || 'Tus notas y archivos están al día.') : 'Usá tu Google Drive gratis para ver todo en tu PC y en tu iPhone.'),
-    h('button', { class: 'btn', onclick: () => nav('settings') }, on ? 'Ver ajustes' : 'Configurar'));
+    h('b', null, ic('link', 18), paired ? 'Dispositivos vinculados' : 'Vinculá tu celu y tu PC'),
+    h('p', null, paired ? P2P.state.msg : 'Pasá fotos, videos y notas de un dispositivo al otro. Directo, sin nube ni cuentas.'),
+    h('button', { class: 'btn', onclick: () => nav('settings') }, paired ? 'Ver dispositivos' : 'Vincular'));
 }
 function renderSide() {
   const q = S.sideQ.trim().toLowerCase();
@@ -116,7 +118,7 @@ function createMenu() {
 }
 addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); S.q = ''; S.qChat = ''; nav('search'); } });
 Sync.onState(() => { const b = $('.sync'); if (b) b.replaceWith(syncBadge()); const s = $('#syncstat'); if (s) renderSyncStat(s); const f = $('.side-foot'); if (f) f.replaceChildren(syncCard()); });
-addEventListener('notis:synced', async () => { await loadAll(); renderSide(); if ((S.view === 'chats' && S.chatId) || S.view === 'calendar' || S.view === 'home') renderMain(); });
+addEventListener('notis:synced', async () => { await loadAll(); renderSide(); if (S.view === 'chats' && S.chatId) { if (!chatById(S.chatId)) return nav('chats', null); S._refreshFeed?.(); } else if (S.view === 'calendar' || S.view === 'home') renderMain(); });
 
 // ---------------------------------------------------------------- color por nota y por chat
 const TINTS = ['#FF453A', '#FF9F0A', '#FFD60A', '#30D158', '#00C7BE', '#64D2FF', '#0A84FF', '#5E5CE6', '#BF5AF2', '#FF375F', '#A2845E', '#8E8E93'];
@@ -176,8 +178,73 @@ function chatDialog(chat) {
 
 // ---------------------------------------------------------------- vista principal
 function renderMain() {
-  main.replaceChildren(); delete main.dataset.tint; main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
+  main.replaceChildren(); S._refreshFeed = null; delete main.dataset.tint; main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
   ({ home: homeView, chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
+}
+
+// ---------------------------------------------------------------- vincular dispositivos (directo, sin nube)
+const xfer = h('div', { id: 'xfer', hidden: true }); document.body.append(xfer);
+function renderXfer() {
+  const t = P2P.state.transfer; xfer.hidden = !t; if (!t) return;
+  const pct = t.total ? Math.round(t.done / t.total * 100) : 0;
+  xfer.replaceChildren(h('div', { class: 'xt' }, h('b', null, (t.dir === 'send' ? 'Enviando ' : 'Recibiendo ') + t.name), h('small', null, `${pct}% · ${fmtSize(t.done)} de ${fmtSize(t.total)}`)), h('i', { class: 'xbar' }, h('s', { style: { width: pct + '%' } })));
+}
+P2P.onState(() => { renderXfer(); const b = $('.sync'); if (b) b.replaceWith(syncBadge()); const f = $('.side-foot'); if (f) f.replaceChildren(syncCard()); const d = $('#p2pbox'); if (d) drawP2P(d); });
+addEventListener('notis:file', e => toast('Recibido: ' + e.detail.name));
+
+function drawP2P(box) {
+  const c = P2P.cfg(), st = P2P.state, paired = P2P.isPaired();
+  const others = (c.devices || []).filter(d => d.id !== c.deviceId);
+  box.replaceChildren(
+    h('div', { class: 'syncstat' }, h('span', { class: 'dotst ' + (st.status === 'ok' ? 'ok' : st.status === 'sync' ? 'sync' : '') }), h('span', null, paired ? st.msg : 'Sin vincular')),
+    paired ? h('div', { class: 'devlist' },
+      h('div', { class: 'dev' }, h('span', { class: 'dotst ok' }), h('b', null, c.name || 'Este dispositivo'), h('small', { class: 'mute' }, 'Este dispositivo')),
+      ...others.map(d => h('div', { class: 'dev' }, h('span', { class: 'dotst ' + (st.peers[d.id]?.authed ? 'ok' : '') }), h('b', null, d.name), h('small', { class: 'mute' }, st.peers[d.id]?.authed ? 'Conectado' : 'Desconectado')))) : null,
+    h('div', { class: 'row gap wrap' },
+      h('button', { class: 'btn', onclick: pairHostDialog }, ic('plus', 18), paired ? 'Vincular otro dispositivo' : 'Vincular un dispositivo'),
+      h('button', { class: 'btn ghost', onclick: () => pairJoinDialog() }, 'Tengo un código'),
+      paired && h('button', { class: 'btn ghost', onclick: () => { P2P.syncNow(); toast('Sincronizando…'); } }, 'Sincronizar ahora'),
+      paired && h('button', { class: 'btn ghost danger', onclick: async () => { if (await confirmBox('¿Desvincular?', 'Este dispositivo deja de sincronizar. Tus datos en él se conservan.', 'Desvincular')) P2P.unpair(); } }, 'Desvincular')));
+}
+
+async function pairHostDialog() {
+  const body = h('div', { class: 'dlg glass' }, h('h3', null, 'Vincular un dispositivo'), h('p', { class: 'mute' }, 'Preparando…'));
+  let pairing = null;
+  const ov = overlay(body, { onClose: () => pairing?.stop() });
+  const fail = e => body.replaceChildren(h('h3', null, 'No se pudo vincular'), h('p', { class: 'mute' }, e.message), h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => ov.close() }, 'Cerrar')));
+  try {
+    pairing = await P2P.hostPairing(name => new Promise(res => {
+      body.replaceChildren(h('h3', null, `¿Vincular "${name}"?`), h('p', { class: 'mute' }, 'Aceptá solo si lo estás haciendo vos desde tu otro dispositivo.'),
+        h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => { res(false); ov.close(); } }, 'Rechazar'),
+          h('button', { class: 'btn', onclick: () => { body.replaceChildren(h('h3', null, 'Vinculando…')); res(true); } }, 'Aceptar')));
+    }));
+    await P2P.loadQR();
+    const qr = window.qrcode(0, 'M'); qr.addData(`${location.origin}${location.pathname}#vincular=${pairing.code}`); qr.make();
+    body.replaceChildren(h('h3', null, 'Vincular un dispositivo'),
+      h('p', { class: 'mute' }, 'En el otro dispositivo abrí Notis → Ajustes → "Tengo un código" y escribí este código. Vale 5 minutos.'),
+      h('div', { class: 'paircode' }, P2P.fmtCode(pairing.code)),
+      h('img', { class: 'pairqr', alt: 'Código QR para vincular', src: qr.createDataURL(6, 2) }),
+      h('p', { class: 'mute small' }, 'También podés escanear el QR con la cámara del otro dispositivo.'),
+      h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar')));
+    const expire = setTimeout(() => { if (document.body.contains(ov)) { ov.close(); toast('El código venció. Generá uno nuevo.'); } }, 300000);
+    await pairing.finished; clearTimeout(expire); ov.close(); toast('Dispositivo vinculado');
+  } catch (e) { fail(e); }
+}
+function pairJoinDialog(prefill = '') {
+  const code = h('input', { type: 'text', class: 'field codein', placeholder: 'ABCD-EFGH', value: prefill, autocapitalize: 'characters', autocomplete: 'off', spellcheck: false, maxLength: 9 });
+  const name = h('input', { type: 'text', class: 'field', value: P2P.deviceName() });
+  const err = h('div', { class: 'errbox', hidden: true });
+  const go = h('button', { class: 'btn', onclick: async () => {
+    err.hidden = true; go.disabled = true; go.textContent = 'Conectando…';
+    try { await P2P.joinPairing(code.value, name.value.trim()); ov.close(); toast('Dispositivo vinculado'); }
+    catch (e) { err.textContent = e.message; err.hidden = false; go.disabled = false; go.textContent = 'Vincular'; }
+  } }, 'Vincular');
+  const ov = overlay(h('div', { class: 'dlg glass' }, h('h3', null, 'Ingresar código'),
+    h('p', { class: 'mute' }, 'En tu otro dispositivo abrí Notis → Ajustes → "Vincular un dispositivo" y escribí el código que aparece.'),
+    code, h('div', { class: 'lbl' }, 'Nombre de este dispositivo'), name, err,
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'), go)));
+  code.addEventListener('input', () => { const c = P2P.cleanCode(code.value); code.value = c.length > 4 ? P2P.fmtCode(c) : c; });
+  setTimeout(() => code.focus(), 120);
 }
 
 // ---------------------------------------------------------------- INICIO
@@ -281,7 +348,7 @@ function fileBody(it) {
     const img = h('img', { class: 'mimg', alt: it.file.name, loading: 'lazy', decoding: 'async' });
     const btn = h('button', { class: 'media', onclick: () => openViewer(it) }, h('div', { class: 'skeleton' }), img);
     imageURL(it).then(u => {
-      if (!u) { btn.replaceWith(fileCard(it, 'Descargá desde otro dispositivo')); return; }
+      if (!u) { btn.replaceWith(fileCard(it, 'Llega cuando se conecten tus dispositivos')); return; }
       img.onload = () => btn.querySelector('.skeleton')?.remove();
       img.onerror = () => btn.replaceWith(fileCard(it, 'Vista previa no disponible'));
       img.src = u;
@@ -291,7 +358,7 @@ function fileBody(it) {
   if (k === 'video') {
     const v = h('video', { playsInline: true, controls: true, preload: 'metadata', class: 'mvid' }), frame = h('div', { class: 'vframe feed' }, v);
     videoStyle(v, frame, it.edits, it.file); bindTrim(v, it.edits);
-    rawURL(it).then(u => { if (u) v.src = u + '#t=0.1'; else frame.replaceWith(fileCard(it, 'Descargá desde otro dispositivo')); });
+    rawURL(it).then(u => { if (u) v.src = u + '#t=0.1'; else frame.replaceWith(fileCard(it, 'Llega cuando se conecten tus dispositivos')); });
     const tools = h('button', { class: 'vedit icon-btn', title: 'Editar video', onclick: () => openViewer(it) }, ic('wand', 18));
     return h('div', { class: 'vwrap' }, frame, tools, h('small', { class: 'vmeta' }, `${it.file.w && it.file.h ? it.file.w + '×' + it.file.h + ' · ' : ''}${it.file.dur ? fmtDur(it.file.dur) + ' · ' : ''}${fmtSize(it.file.size)}`));
   }
@@ -380,7 +447,7 @@ async function openViewer(it) {
       (k === 'image' || k === 'video') && h('button', { class: 'btn', onclick: () => { ov.close(); editMedia(it); } }, ic('wand', 18), 'Editar'),
       h('button', { class: 'btn ghost', onclick: async () => { const b = await blobP; if (!b) return; if (k === 'image' && hasEdits(it.edits)) { try { await exportImage(b, it.edits, it.file.name, 'png'); } catch (e) { toast(e.message); } } else saveFile(b, it.file.name); } }, ic('share', 18), k === 'image' && hasEdits(it.edits) ? 'Exportar' : 'Guardar')));
   const ov = overlay(h('div', { class: 'viewer' }, bar, stage), { cls: 'full' });
-  const blob = await blobP; if (!blob) { stage.replaceChildren(h('p', { class: 'mute pad' }, 'Este archivo todavía no está en este dispositivo. Conectá la sincronización y esperá a que termine en el otro.')); return; }
+  const blob = await blobP; if (!blob) { stage.replaceChildren(h('p', { class: 'mute pad' }, 'Este archivo todavía no llegó a este dispositivo. Abrí Notis en el otro dispositivo y esperá a que se conecten.')); return; }
   const url = URL.createObjectURL(blob); ov.addEventListener('transitionend', () => {});
   const oc = ov.close; ov.close = () => { URL.revokeObjectURL(url); oc(); };
   if (k === 'image') {
@@ -409,14 +476,20 @@ function chatView() {
   if (!chat) { main.append(h('div', { class: 'empty' }, h('div', { class: 'logo xl' }, ic('note', 34)), h('h2', null, 'Notis'), h('p', { class: 'mute' }, 'Elegí un chat o creá uno nuevo.'), h('button', { class: 'btn', onclick: () => chatDialog() }, ic('plus', 18), 'Nuevo chat'))); return; }
   main.dataset.tint = chat.color && chat.tint ? chat.tint : 'none'; main.style.setProperty('--tc', chat.color || 'transparent');
   const feed = h('div', { class: 'feed', id: 'feed' });
-  const items = chatItems(chat.id); let lastDay = '';
+  const items = chatItems(chat.id);
   const pinned = items.filter(i => i.pinned);
-  for (const it of items) {
-    const d = ymd(it.created);
-    if (d !== lastDay) { feed.append(h('div', { class: 'dsep' }, h('span', null, dayLabel(it.created)))); lastDay = d; }
-    feed.append(itemNode(it));
-  }
-  if (!items.length) feed.append(h('div', { class: 'empty small' }, h('div', { class: 'big-emoji' }, chat.emoji), h('p', { class: 'mute' }, 'Escribí algo o subí un archivo para empezar.')));
+  const buildFeed = () => {
+    const list = chatItems(chat.id), nodes = []; let lastDay = '';
+    for (const it of list) {
+      const d = ymd(it.created);
+      if (d !== lastDay) { nodes.push(h('div', { class: 'dsep' }, h('span', null, dayLabel(it.created)))); lastDay = d; }
+      nodes.push(itemNode(it));
+    }
+    if (!list.length) nodes.push(h('div', { class: 'empty small' }, h('div', { class: 'big-emoji' }, chat.emoji), h('p', { class: 'mute' }, 'Escribí algo o subí un archivo para empezar.')));
+    feed.replaceChildren(...nodes);
+  };
+  buildFeed();
+  S._refreshFeed = () => { const near = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 140; buildFeed(); if (near) feed.scrollTop = feed.scrollHeight; };
 
   const head = h('header', { class: 'chead' },
     h('button', { class: 'icon-btn back', onclick: () => history.length > 1 ? history.back() : nav('chats') }, ic('back', 24)),
@@ -593,6 +666,7 @@ function settingsView() {
       h('span', { class: 'pchip', style: { background: `linear-gradient(135deg, ${p.a}, ${p.b})` } }, settings.palette === p.name && ic('check', 16)), h('small', null, p.name))));
   };
   drawPal();
+  const p2pBox = h('div', { id: 'p2pbox', class: 'stack' }); drawP2P(p2pBox);
   const cfg = Sync.getCfg(); const cid = h('input', { type: 'text', class: 'field', placeholder: 'xxxxxxxx.apps.googleusercontent.com', value: cfg.clientId || '', inputMode: 'url', autocapitalize: 'off' });
   const stat = h('div', { class: 'syncstat', id: 'syncstat' }); renderSyncStat(stat);
   const storage = h('p', { class: 'mute' }, 'Calculando…');
@@ -616,14 +690,18 @@ function settingsView() {
       h('label', { class: 'sl' }, h('span', null, 'Redondeo'), h('input', { type: 'range', min: 4, max: 28, step: 1, value: settings.radius, oninput: e => setSettings({ radius: +e.target.value }) })),
       !isTouch && toggle('Enter envía el mensaje', 'enterSends', 'Shift+Enter hace un salto de línea')),
 
-    h('section', { class: 'card glass' }, h('h3', null, 'Sincronización con Google Drive'),
-      h('p', { class: 'mute' }, 'Gratis. Tus notas y archivos (en calidad original, 4K incluido) se guardan en una carpeta oculta de TU Drive y aparecen en todos tus dispositivos. Usa tus 15 GB gratuitos de Google.'),
+    h('section', { class: 'card glass' }, h('h3', null, 'Vincular tus dispositivos'),
+      h('p', { class: 'mute' }, 'Directo entre tu PC y tu celu, sin nube ni cuentas. Notas, fotos y videos pasan en calidad original, sin límite de tamaño. Los dos dispositivos tienen que tener Notis abierto al mismo tiempo (mejor con el mismo Wi-Fi). Cada uno guarda su propia copia.'),
+      p2pBox),
+
+    h('details', { class: 'card glass adv' }, h('summary', null, 'Avanzado: respaldo en Google Drive (opcional)'),
+      h('p', { class: 'mute' }, 'Gratis. Guarda tus notas y archivos en una carpeta oculta de TU Drive, para que estén disponibles aunque tus dispositivos no se encuentren. Usa tus 15 GB gratuitos de Google.'),
       stat, h('label', { class: 'lbl' }, 'Client ID de Google'), cid,
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn', onclick: async () => { const id = cid.value.trim(); if (!id) return toast('Pegá primero el Client ID'); try { await Sync.connect(id, true); Sync.start(); Sync.syncNow(); re(); } catch (e) { toast('No se pudo conectar: ' + e.message, 4500); } } }, Sync.isConnected() ? 'Reconectar' : 'Conectar con Google'),
         Sync.isConnected() && h('button', { class: 'btn ghost', onclick: () => Sync.syncNow() }, 'Sincronizar ahora'),
         Sync.isConnected() && h('button', { class: 'btn ghost danger', onclick: () => { Sync.disconnect(); re(); } }, 'Desconectar')),
-      h('details', null, h('summary', null, 'Cómo obtener el Client ID (una sola vez, 3 minutos)'),
+      h('details', null, h('summary', null, 'Cómo obtener el Client ID (3 minutos)'),
         h('ol', { class: 'guide' },
           h('li', null, 'Entrá a ', h('a', { href: 'https://console.cloud.google.com/projectcreate', target: '_blank', rel: 'noopener' }, 'console.cloud.google.com'), ' y creá un proyecto (nombre libre).'),
           h('li', null, 'Menú → "APIs y servicios" → "Biblioteca" → buscá ', h('b', null, 'Google Drive API'), ' → Habilitar.'),
@@ -663,7 +741,9 @@ async function boot() {
     renderAll();
     navigator.storage?.persist?.();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-    Sync.start();
+    Sync.start(); P2P.start();
+    const m = location.hash.match(/vincular=([A-Za-z0-9-]+)/);
+    if (m) { history.replaceState(history.state, '', location.pathname); pairJoinDialog(P2P.fmtCode(P2P.cleanCode(m[1]))); }
   } catch (e) {
     root.replaceChildren(h('div', { class: 'empty' }, h('h2', null, 'No pude abrir la base de datos'), h('p', { class: 'mute' }, 'Si usás una ventana privada, el navegador no permite guardar datos. Probá en una ventana normal. ' + e.message)));
   }
