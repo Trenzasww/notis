@@ -1,5 +1,6 @@
 // Paletas (nombre, acento, acento 2, neutro: 1 = fondo teñido del acento, 0 = gris puro)
 export const PALETTES = [
+  ['Blanco y Negro', '#111114', '#F5F5F7', 0, 1],
   ['Amarillo y Negro', '#FFD60A', '#FFB300', 0], ['Google', '#4285F4', '#EA4335', 1], ['iOS Azul', '#0A84FF', '#5E5CE6', 1],
   ['iOS Verde', '#30D158', '#64D2FF', 1], ['iOS Naranja', '#FF9F0A', '#FF453A', 1], ['Medianoche', '#7C83FF', '#B07CFF', 1],
   ['Océano', '#0EA5E9', '#22D3EE', 1], ['Bosque', '#22C55E', '#84CC16', 1], ['Atardecer', '#FB7185', '#F59E0B', 1],
@@ -22,16 +23,18 @@ export const PALETTES = [
   ['Caribe', '#00CEC9', '#74B9FF', 1], ['Otoño', '#E17055', '#FDCB6E', 1], ['Primavera', '#55E6C1', '#F8EFBA', 1],
   ['Invierno', '#74B9FF', '#DFE6E9', 1], ['Bubblegum', '#FF9FF3', '#54A0FF', 1], ['Latte', '#C8A27A', '#8B5E3C', 1],
   ['Titanio', '#8E9AAF', '#CBC0D3', 0]
-].map(([name, a, b, n]) => ({ name, a, b, n }));
+].map(([name, a, b, n, mono]) => ({ name, a, b, n, mono: !!mono }));
 
 export const DEFAULTS = {
-  palette: 'Amarillo y Negro', mode: 'dark', custom: '#FFD60A', custom2: '#FF9F0A', oled: false, boldAll: false,
-  scale: 1, radius: 18, bubble: 'soft', name: '', blur: 28, wallpaper: true, enterSends: true, updated: 0
+  palette: 'Blanco y Negro', mode: 'light', custom: '#FFD60A', custom2: '#FF9F0A', oled: false, boldAll: false,
+  v: 3, scale: 1, radius: 18, bubble: 'soft', name: '', blur: 28, wallpaper: true, enterSends: true, updated: 0
 };
 
 const KEY = 'notis.settings';
 export let settings = { ...DEFAULTS };
-try { Object.assign(settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch {}
+let stored = {};
+try { stored = JSON.parse(localStorage.getItem(KEY) || '{}'); Object.assign(settings, stored); } catch {}
+if (Object.keys(stored).length && (stored.v || 0) < 3) { settings.palette = DEFAULTS.palette; settings.mode = DEFAULTS.mode; settings.v = 3; settings.updated = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(settings)); } catch {} }
 
 const listeners = new Set();
 export const onSettings = fn => listeners.add(fn);
@@ -60,7 +63,9 @@ export function resolvedMode() {
   return settings.mode === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : settings.mode;
 }
 export function applyTheme() {
-  const p = currentPalette(), dark = resolvedMode() === 'dark', hue = hexToHsl(p.a), s = p.n ? 1 : 0, r = document.documentElement.style;
+  const p0 = currentPalette(), dark = resolvedMode() === 'dark', r = document.documentElement.style;
+  const p = p0.mono ? { ...p0, a: dark ? '#F5F5F7' : '#111114', b: dark ? '#B9B9C2' : '#4A4A52' } : p0;
+  const hue = hexToHsl(p.a), s = p.n ? 1 : 0;
   const hsl = (sat, l) => `hsl(${hue} ${sat * s}% ${l}%)`;
   const v = dark ? {
     bg: settings.oled ? '#000' : hsl(7, 9.5), side: settings.oled ? '#000' : hsl(7, 11.5), surface: settings.oled ? '#0e0e0f' : hsl(7, 13.5), surface2: settings.oled ? '#1a1a1c' : hsl(7, 18.5),
@@ -72,8 +77,9 @@ export function applyTheme() {
   const set = (k, val) => r.setProperty('--' + k, val);
   Object.entries(v).forEach(([k, val]) => set(k, val));
   set('accent', p.a); set('accent2', p.b); set('on', on(p.a)); set('on2', on(p.b));
-  const hb = hexToHsl(p.b), aura3 = `hsl(${(hb + 150) % 360} 68% ${dark ? 46 : 70}%)`;
-  set('aura3', aura3); set('blur', (settings.blur ?? 28) + 'px'); set('blur-sm', Math.round((settings.blur ?? 28) * .55) + 'px');
+  const hb = hexToHsl(p.b);
+  const aura = p0.mono ? (dark ? ['#5a5a68', '#34343f', '#7a7a88'] : ['#c4c4d0', '#e8e8f0', '#b0b0be']) : [p.a, `hsl(${(hb + 150) % 360} 68% ${dark ? 46 : 70}%)`, p.b];
+  set('aura1', aura[0]); set('aura2', aura[1]); set('aura3', aura[2]); set('blur', (settings.blur ?? 28) + 'px'); set('blur-sm', Math.round((settings.blur ?? 28) * .55) + 'px');
   set('radius', settings.radius + 'px'); set('scale', settings.scale);
   set('wt', settings.boldAll ? 700 : 500);
   document.documentElement.dataset.mode = dark ? 'dark' : 'light';

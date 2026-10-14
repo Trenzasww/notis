@@ -1,5 +1,5 @@
 import * as DB from './db.js';
-import { settings, setSettings, PALETTES, DEFAULTS } from './theme.js';
+import { settings, setSettings, resolvedMode, PALETTES, DEFAULTS } from './theme.js';
 import { $, h, ic, toast, overlay, sheet, ask, confirmBox, richText, dayLabel, shortWhen, fmtTime, fmtSize, fmtDur, ymd, kindOf, FILE_ICON, saveFile, debounce } from './util.js';
 import { emojiPicker } from './emoji.js';
 import { editedURL, openImageEditor, openVideoEditor, videoStyle, bindTrim, hasEdits, exportImage } from './media.js';
@@ -28,9 +28,9 @@ async function loadAll() {
 }
 async function seed() {
   if (S.chats.length) return;
-  const base = [['📝', 'Mis notas', '#FFD60A'], ['📚', 'Parciales', '#0A84FF'], ['🖼️', 'Fotos y videos', '#FF375F'], ['🔗', 'Links', '#30D158']];
+  const base = [['📝', 'Mis notas', null], ['📚', 'Parciales', null], ['🖼️', 'Fotos y videos', null], ['🔗', 'Links', null]];
   for (let i = 0; i < base.length; i++) {
-    const c = { id: DB.uid(), name: base[i][1], emoji: base[i][0], color: base[i][2], created: Date.now() + i, pinned: false };
+    const c = { id: DB.uid(), name: base[i][1], emoji: base[i][0], color: base[i][2], tint: 'none', created: Date.now() + i, pinned: false };
     await DB.save('chats', c); S.chats.push(c);
   }
   const first = S.chats[0];
@@ -70,10 +70,12 @@ function syncBadge() {
 function chatRow(c) {
   const items = chatItems(c.id), last = items[items.length - 1];
   const prev = last ? (last.file ? `${FILE_ICON[kindOf(last.file.mime, last.file.name)]} ${last.text || last.file.name}` : last.text.replace(/[#*`>]/g, '').split('\n').find(l => l.trim()) || '') : 'Sin mensajes';
-  return h('button', { class: 'crow' + (S.chatId === c.id ? ' on' : ''), onclick: () => nav('chats', c.id) },
-    h('span', { class: 'avatar', style: { background: `color-mix(in srgb, ${c.color} 22%, var(--surface2))` } }, c.emoji),
+  const row = h('button', { class: 'crow' + (S.chatId === c.id ? ' on' : ''), onclick: () => nav('chats', c.id) },
+    h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji),
     h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name, c.pinned && h('i', { class: 'pinned-i' }, ic('pin', 12))), h('span', { class: 'cprev' }, prev)),
     h('span', { class: 'ctime' }, last ? shortWhen(last.created) : ''));
+  applyTint(row, c.color && c.tint ? { c: c.color, m: c.tint } : null);
+  return row;
 }
 function syncCard() {
   const on = Sync.isConnected();
@@ -91,7 +93,7 @@ function renderSide() {
   side.replaceChildren(
     h('div', { class: 'side-head' },
       h('div', { class: 'brand' }, h('span', { class: 'logo' }, ic('note', 20)), h('div', { class: 'btxt' }, h('b', null, 'Notis'), h('small', null, settings.name || 'Espacio personal'))),
-      h('div', { class: 'row gap6 m-only' }, syncBadge())),
+      h('div', { class: 'row gap6' }, modeBtn(), h('span', { class: 'm-only' }, syncBadge()))),
     h('div', { class: 'm-title m-only' }, 'Chats'),
     h('label', { class: 'search-box' }, ic('search', 18), search, h('kbd', { class: 'd-only' }, '⌘K')),
     h('div', { class: 'd-only' }, h('div', { class: 'sec-l' }, 'Menú principal'),
@@ -116,23 +118,56 @@ addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLower
 Sync.onState(() => { const b = $('.sync'); if (b) b.replaceWith(syncBadge()); const s = $('#syncstat'); if (s) renderSyncStat(s); const f = $('.side-foot'); if (f) f.replaceChildren(syncCard()); });
 addEventListener('notis:synced', async () => { await loadAll(); renderSide(); if ((S.view === 'chats' && S.chatId) || S.view === 'calendar' || S.view === 'home') renderMain(); });
 
+// ---------------------------------------------------------------- color por nota y por chat
+const TINTS = ['#FF453A', '#FF9F0A', '#FFD60A', '#30D158', '#00C7BE', '#64D2FF', '#0A84FF', '#5E5CE6', '#BF5AF2', '#FF375F', '#A2845E', '#8E8E93'];
+const avBg = c => c.color ? `color-mix(in srgb, ${c.color} 26%, var(--surface2))` : 'var(--glass-soft)';
+function applyTint(el, t) { if (t && t.c && t.m && t.m !== 'none') { el.classList.add('t-' + t.m); el.style.setProperty('--tc', t.c); } }
+function modeBtn() {
+  const dark = resolvedMode() === 'dark';
+  return h('button', { class: 'icon-btn mode', title: dark ? 'Pasar a modo claro' : 'Pasar a modo oscuro', 'aria-label': 'Cambiar entre modo claro y oscuro', onclick: () => { setSettings({ mode: dark ? 'light' : 'dark' }); renderAll(); } }, ic(dark ? 'sun' : 'moon', 20));
+}
+function colorPicker(val, { sample = 'Así se va a ver' } = {}) {
+  const st = { c: val.c || null, m: val.m || 'none' };
+  const prev = h('div', { class: 'bubble tint-prev' }), segBox = h('div', { class: 'seg' }), swBox = h('div', { class: 'swatches' });
+  const paintPrev = () => { prev.className = 'bubble tint-prev'; prev.removeAttribute('style'); applyTint(prev, st); prev.textContent = sample; };
+  const redraw = () => { drawSeg(); drawSw(); paintPrev(); };
+  const drawSeg = () => segBox.replaceChildren(...[['outline', 'Contorno'], ['glass', 'Vidrio de color'], ['none', 'Sin efecto']].map(([v, l]) =>
+    h('button', { class: 'chip' + (st.m === v ? ' on' : ''), onclick: () => { st.m = v; if (v !== 'none' && !st.c) st.c = TINTS[6]; redraw(); } }, l)));
+  const drawSw = () => swBox.replaceChildren(
+    h('button', { class: 'sw none' + (!st.c ? ' on' : ''), title: 'Sin color', onclick: () => { st.c = null; st.m = 'none'; redraw(); } }, '×'),
+    ...TINTS.map(k => h('button', { class: 'sw' + (st.c === k ? ' on' : ''), style: { background: k }, title: k, onclick: () => { st.c = k; if (st.m === 'none') st.m = 'glass'; redraw(); } })),
+    h('label', { class: 'sw rainbow', title: 'Otro color' }, h('input', { type: 'color', value: st.c || '#0A84FF', oninput: e => { st.c = e.target.value; if (st.m === 'none') st.m = 'glass'; paintPrev(); }, onchange: redraw })));
+  redraw();
+  const box = h('div', { class: 'cpick' }, segBox, swBox, prev);
+  box.get = () => st;
+  return box;
+}
+function tintDialog(it) {
+  const pk = colorPicker(it.tint || {}, { sample: (it.text || it.file?.name || 'Tu nota').replace(/[#*`>]/g, '').slice(0, 70) });
+  const ov = overlay(h('div', { class: 'dlg glass' }, h('h3', null, 'Color de la nota'), pk,
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'),
+      h('button', { class: 'btn', onclick: async () => {
+        const t = pk.get(); if (t.c && t.m !== 'none') it.tint = { c: t.c, m: t.m }; else delete it.tint;
+        await saveItem(it); ov.close(); refreshNode(it);
+      } }, 'Guardar'))));
+}
+
 // ---------------------------------------------------------------- diálogo de chat
 function chatDialog(chat) {
-  const c = chat || { name: '', emoji: '💬', color: COLORS[5] };
-  let emoji = c.emoji, color = c.color;
+  const c = chat || { name: '', emoji: '💬', color: null, tint: 'none' };
+  let emoji = c.emoji;
   const name = h('input', { type: 'text', class: 'field', value: c.name, placeholder: 'Nombre del chat' });
   const eb = h('button', { class: 'avatar big', onclick: () => { pop.hidden = !pop.hidden; } }, emoji);
   const pop = h('div', { hidden: true }, emojiPicker(e => { emoji = e; eb.textContent = e; pop.hidden = true; }));
-  const sw = h('div', { class: 'swatches' });
-  const drawSw = () => sw.replaceChildren(...COLORS.map(k => h('button', { class: 'sw' + (k === color ? ' on' : ''), style: { background: k }, onclick: () => { color = k; drawSw(); } })));
-  drawSw();
+  const pk = colorPicker({ c: c.color, m: c.tint }, { sample: 'Así se ve el chat' });
   const ov = overlay(h('div', { class: 'dlg glass' }, h('h3', null, chat ? 'Editar chat' : 'Nuevo chat'),
-    h('div', { class: 'row gap' }, eb, name), pop, sw,
+    h('div', { class: 'row gap' }, eb, name), pop,
+    h('div', { class: 'lbl' }, 'Color del chat'), pk,
     h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => ov.close() }, 'Cancelar'),
       h('button', { class: 'btn', onclick: async () => {
-        const n = name.value.trim() || 'Sin nombre';
+        const n = name.value.trim() || 'Sin nombre', t = pk.get();
         const o = chat || { id: DB.uid(), created: Date.now(), pinned: false };
-        Object.assign(o, { name: n, emoji, color }); await DB.save('chats', o);
+        Object.assign(o, { name: n, emoji, color: t.c, tint: t.c ? t.m : 'none' }); await DB.save('chats', o);
         if (!chat) S.chats.push(o);
         ov.close(); if (!chat) nav('chats', o.id); else renderAll();
       } }, 'Guardar'))));
@@ -141,7 +176,7 @@ function chatDialog(chat) {
 
 // ---------------------------------------------------------------- vista principal
 function renderMain() {
-  main.replaceChildren(); main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
+  main.replaceChildren(); delete main.dataset.tint; main.ondragover = main.ondragleave = main.ondrop = null; main.classList.remove('drop');
   ({ home: homeView, chats: chatView, calendar: calView, search: searchView, settings: settingsView }[S.view])();
 }
 
@@ -157,7 +192,7 @@ function homeView() {
   const stat = (n, l) => h('div', { class: 'stat' }, h('b', null, n), h('small', null, l));
   const rcard = it => {
     const c = chatById(it.chatId), k = it.file ? kindOf(it.file.mime, it.file.name) : null;
-    const head = h('div', { class: 'rh' }, h('span', { class: 'em', style: { background: `color-mix(in srgb, ${c.color} 25%, var(--surface2))` } }, c.emoji), h('span', null, shortWhen(it.created)));
+    const head = h('div', { class: 'rh' }, h('span', { class: 'em', style: { background: avBg(c) } }, c.emoji), h('span', null, shortWhen(it.created)));
     if (k === 'image') {
       const img = h('img', { alt: '' }); imageURL(it, 500).then(u => u && (img.src = u));
       return h('button', { class: 'rcard img', onclick: () => nav('chats', it.chatId, { hl: it.id }) }, img, head);
@@ -168,7 +203,7 @@ function homeView() {
   const evRow = e => h('button', { class: 'ev', onclick: () => { S.calSel = e.date; S.calMonth = new Date(e.date + 'T12:00'); nav('calendar'); } }, h('i', { class: 'evbar', style: { background: e.color } }),
     h('span', { class: 'evinfo' }, h('b', null, e.title), h('small', { class: 'mute' }, [new Date(e.date + 'T12:00').toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }), e.time || 'Todo el día'].join(' · '))));
   main.append(h('div', { class: 'page home' },
-    h('div', { class: 'hello' }, h('div', null, h('small', { class: 'mute caps' }, dateStr), h('h1', null, g, settings.name ? ', ' : '', settings.name ? h('span', { class: 'acc' }, settings.name) : null))),
+    h('div', { class: 'hello' }, h('div', null, h('small', { class: 'mute caps' }, dateStr), h('h1', null, g, settings.name ? ', ' : '', settings.name ? h('span', { class: 'acc' }, settings.name) : null)), h('div', { class: 'row gap6 m-only' }, modeBtn(), syncBadge())),
     h('button', { class: 'search-big', onclick: () => { S.q = ''; S.qChat = ''; nav('search'); } }, ic('search', 19), 'Buscar notas, archivos, links…'),
     h('div', { class: 'quick' }, [['note', 'Nota', () => quickAdd('note')], ['list', 'Checklist', () => quickAdd('check')], ['image', 'Archivo', () => quickAdd('file')], ['cal', 'Evento', () => eventDialog(null, today)]]
       .map(([i, l, f]) => h('button', { class: 'qtile', onclick: f }, h('span', { class: 'qic' }, ic(i, 22)), h('span', null, l)))),
@@ -276,6 +311,7 @@ function textBody(it) { return richText(it.text, { onTag: t => { S.q = t; nav('s
 
 function itemNode(it) {
   const bubble = h('div', { class: 'bubble' + (it.pinned ? ' pinned' : '') });
+  applyTint(bubble, it.tint);
   if (it.file) bubble.append(fileBody(it));
   if (it.text) bubble.append(textBody(it));
   if (it.link) bubble.append(linkCard(it.link));
@@ -305,6 +341,7 @@ function itemMenu(it) {
     it.text && { label: 'Copiar texto', icon: 'copy', run: () => { navigator.clipboard?.writeText(it.text); toast('Texto copiado'); } },
     it.file && { label: 'Guardar / compartir archivo', icon: 'share', run: async () => { const b = await getBlob(it); if (b) saveFile(b, it.file.name); } },
     { label: it.pinned ? 'Quitar de fijados' : 'Fijar', icon: 'pin', run: async () => { it.pinned = !it.pinned; await saveItem(it); refreshNode(it); } },
+    { label: 'Color de la nota', icon: 'drop', run: () => tintDialog(it) },
     { label: 'Mover a otro chat', icon: 'chat', run: () => moveItem(it) },
     { label: 'Eliminar', icon: 'trash', danger: true, run: async () => { if (await confirmBox('¿Eliminar?', 'Se borra de este dispositivo y de tu Drive (si lo sincronizaste).')) { await DB.remove('items', it); $(`.msg[data-id="${it.id}"]`)?.remove(); renderSide(); } } }
   ]);
@@ -370,6 +407,7 @@ async function openViewer(it) {
 function chatView() {
   const chat = chatById(S.chatId);
   if (!chat) { main.append(h('div', { class: 'empty' }, h('div', { class: 'logo xl' }, ic('note', 34)), h('h2', null, 'Notis'), h('p', { class: 'mute' }, 'Elegí un chat o creá uno nuevo.'), h('button', { class: 'btn', onclick: () => chatDialog() }, ic('plus', 18), 'Nuevo chat'))); return; }
+  main.dataset.tint = chat.color && chat.tint ? chat.tint : 'none'; main.style.setProperty('--tc', chat.color || 'transparent');
   const feed = h('div', { class: 'feed', id: 'feed' });
   const items = chatItems(chat.id); let lastDay = '';
   const pinned = items.filter(i => i.pinned);
@@ -382,7 +420,7 @@ function chatView() {
 
   const head = h('header', { class: 'chead' },
     h('button', { class: 'icon-btn back', onclick: () => history.length > 1 ? history.back() : nav('chats') }, ic('back', 24)),
-    h('span', { class: 'avatar sm', style: { background: `linear-gradient(135deg, ${chat.color}, ${chat.color}99)` } }, chat.emoji),
+    h('span', { class: 'avatar sm', style: { background: avBg(chat) } }, chat.emoji),
     h('div', { class: 'ctitle' }, h('b', null, chat.name), h('small', { class: 'mute' }, `${items.length} elementos${pinned.length ? ' · ' + pinned.length + ' fijados' : ''}`)),
     pinned.length ? h('button', { class: 'icon-btn', title: 'Ir al último fijado', onclick: () => jumpTo(pinned[pinned.length - 1].id) }, ic('pin', 20)) : null,
     h('button', { class: 'icon-btn', title: 'Buscar', onclick: () => { S.qChat = chat.id; S.q = ''; nav('search'); } }, ic('search', 20)),
@@ -525,10 +563,10 @@ function searchView() {
     const evs = scope ? [] : live(S.events).filter(e => (e.title + ' ' + (e.note || '')).toLowerCase().includes(q));
     const chats = scope ? [] : live(S.chats).filter(c => c.name.toLowerCase().includes(q));
     if (!hits.length && !evs.length && !chats.length) return out.append(h('p', { class: 'mute pad' }, 'Sin resultados.'));
-    if (chats.length) out.append(h('h3', { class: 'sec' }, 'Chats'), ...chats.map(c => h('button', { class: 'crow', onclick: () => nav('chats', c.id) }, h('span', { class: 'avatar', style: { background: c.color } }, c.emoji), h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name)))));
+    if (chats.length) out.append(h('h3', { class: 'sec' }, 'Chats'), ...chats.map(c => h('button', { class: 'crow', onclick: () => nav('chats', c.id) }, h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji), h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, c.name)))));
     if (hits.length) out.append(h('h3', { class: 'sec' }, `Mensajes (${hits.length})`), ...hits.sort((a, b) => b.it.created - a.it.created).slice(0, 80).map(({ c, it }) => {
       const t = it.text || it.file?.name || it.link?.title || '', i = Math.max(0, t.toLowerCase().indexOf(q)), snip = t.slice(Math.max(0, i - 30), i + 90).replace(/\n/g, ' ');
-      return h('button', { class: 'crow', onclick: () => nav('chats', c.id, { hl: it.id }) }, h('span', { class: 'avatar', style: { background: c.color } }, c.emoji),
+      return h('button', { class: 'crow', onclick: () => nav('chats', c.id, { hl: it.id }) }, h('span', { class: 'avatar', style: { background: avBg(c) } }, c.emoji),
         h('span', { class: 'cinfo' }, h('span', { class: 'cname' }, it.file ? FILE_ICON[kindOf(it.file.mime, it.file.name)] + ' ' + (it.file.name) : c.name), h('span', { class: 'cprev' }, snip)), h('span', { class: 'ctime' }, shortWhen(it.created)));
     }));
     if (evs.length) out.append(h('h3', { class: 'sec' }, 'Eventos'), ...evs.map(e => h('button', { class: 'ev', onclick: () => { S.calSel = e.date; S.calMonth = new Date(e.date + 'T12:00'); nav('calendar'); } }, h('i', { class: 'evbar', style: { background: e.color } }), h('span', { class: 'evinfo' }, h('b', null, e.title), h('small', { class: 'mute' }, e.date)))));
