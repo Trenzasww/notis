@@ -26,7 +26,7 @@ export const PALETTES = [
 
 export const DEFAULTS = {
   palette: 'Amarillo y Negro', mode: 'dark', custom: '#FFD60A', custom2: '#FF9F0A', oled: false, boldAll: false,
-  scale: 1, radius: 18, bubble: 'soft', name: '', wallpaper: true, enterSends: true, updated: 0
+  scale: 1, radius: 18, bubble: 'soft', name: '', blur: 28, wallpaper: true, enterSends: true, updated: 0
 };
 
 const KEY = 'notis.settings';
@@ -72,6 +72,8 @@ export function applyTheme() {
   const set = (k, val) => r.setProperty('--' + k, val);
   Object.entries(v).forEach(([k, val]) => set(k, val));
   set('accent', p.a); set('accent2', p.b); set('on', on(p.a)); set('on2', on(p.b));
+  const hb = hexToHsl(p.b), aura3 = `hsl(${(hb + 150) % 360} 68% ${dark ? 46 : 70}%)`;
+  set('aura3', aura3); set('blur', (settings.blur ?? 28) + 'px'); set('blur-sm', Math.round((settings.blur ?? 28) * .55) + 'px');
   set('radius', settings.radius + 'px'); set('scale', settings.scale);
   set('wt', settings.boldAll ? 700 : 500);
   document.documentElement.dataset.mode = dark ? 'dark' : 'light';

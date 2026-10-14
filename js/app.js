@@ -34,7 +34,7 @@ async function seed() {
     await DB.save('chats', c); S.chats.push(c);
   }
   const first = S.chats[0];
-  await addItem(first.id, { type: 'text', text: '# ¡Bienvenido a Notis! 👋\nEste es tu espacio privado. Escribí notas, subí fotos, videos, PDF y links.\n\n- [x] Crear mi primer chat\n- [ ] Elegir mi paleta en **Ajustes**\n- [ ] Subir una foto 📸\n\nUsá #etiquetas para encontrar todo rápido.' });
+  await addItem(first.id, { type: 'text', text: '# Bienvenido a Notis\nEste es tu espacio privado. Escribí notas, subí fotos, videos, PDF y links.\n\n- [x] Crear mi primer chat\n- [ ] Elegir mi paleta en **Ajustes**\n- [ ] Subir una foto\n\nUsá #etiquetas para encontrar todo rápido.' });
 }
 async function addItem(chatId, data) {
   const it = { id: DB.uid(), chatId, type: 'text', text: '', created: Date.now(), pinned: false, ...data };
@@ -90,7 +90,7 @@ function renderSide() {
     onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) { S.q = e.target.value.trim(); S.qChat = ''; S.sideQ = ''; nav('search'); } } });
   side.replaceChildren(
     h('div', { class: 'side-head' },
-      h('div', { class: 'brand' }, h('span', { class: 'logo' }, '📝'), h('div', { class: 'btxt' }, h('b', null, 'Notis'), h('small', null, settings.name || 'Espacio personal'))),
+      h('div', { class: 'brand' }, h('span', { class: 'logo' }, ic('note', 20)), h('div', { class: 'btxt' }, h('b', null, 'Notis'), h('small', null, settings.name || 'Espacio personal'))),
       h('div', { class: 'row gap6 m-only' }, syncBadge())),
     h('div', { class: 'm-title m-only' }, 'Chats'),
     h('label', { class: 'search-box' }, ic('search', 18), search, h('kbd', { class: 'd-only' }, '⌘K')),
@@ -369,7 +369,7 @@ async function openViewer(it) {
 // vista de chat + compositor
 function chatView() {
   const chat = chatById(S.chatId);
-  if (!chat) { main.append(h('div', { class: 'empty' }, h('div', { class: 'big-emoji' }, '📝'), h('h2', null, 'Notis'), h('p', { class: 'mute' }, 'Elegí un chat o creá uno nuevo.'), h('button', { class: 'btn', onclick: () => chatDialog() }, ic('plus', 18), 'Nuevo chat'))); return; }
+  if (!chat) { main.append(h('div', { class: 'empty' }, h('div', { class: 'logo xl' }, ic('note', 34)), h('h2', null, 'Notis'), h('p', { class: 'mute' }, 'Elegí un chat o creá uno nuevo.'), h('button', { class: 'btn', onclick: () => chatDialog() }, ic('plus', 18), 'Nuevo chat'))); return; }
   const feed = h('div', { class: 'feed', id: 'feed' });
   const items = chatItems(chat.id); let lastDay = '';
   const pinned = items.filter(i => i.pinned);
@@ -563,7 +563,7 @@ function settingsView() {
 
   main.append(h('div', { class: 'page' },
     h('div', { class: 'ph' }, h('h2', null, 'Ajustes')),
-    h('section', { class: 'card glass' }, h('h3', null, '🎨 Apariencia'),
+    h('section', { class: 'card glass' }, h('h3', null, 'Apariencia'),
       h('label', { class: 'lbl' }, 'Tu nombre'), h('input', { type: 'text', class: 'field', placeholder: 'Para el saludo de Inicio', value: settings.name || '', oninput: e => setSettings({ name: e.target.value }) }),
       h('label', { class: 'lbl' }, 'Modo'), seg([['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Oscuro']], settings.mode, v => { setSettings({ mode: v }); re(); }),
       h('label', { class: 'lbl' }, `Paletas (${PALETTES.length})`),
@@ -572,12 +572,13 @@ function settingsView() {
         h('label', { class: 'colorin' }, 'Color 1', h('input', { type: 'color', value: settings.custom, oninput: e => setSettings({ custom: e.target.value, palette: '__custom' }) })),
         h('label', { class: 'colorin' }, 'Color 2', h('input', { type: 'color', value: settings.custom2, oninput: e => setSettings({ custom2: e.target.value, palette: '__custom' }) }))),
       h('label', { class: 'lbl' }, 'Burbujas'), seg([['soft', 'Suave'], ['solid', 'Sólido'], ['gradient', 'Degradado']], settings.bubble, v => { setSettings({ bubble: v }); re(); }),
-      toggle('Negro puro (OLED)', 'oled', 'Ahorra batería en pantallas OLED como la del iPhone'), toggle('Todo en negrita', 'boldAll', 'Tipografía SF Bold en todo el texto'), toggle('Fondo decorado', 'wallpaper'),
+      toggle('Negro puro (OLED)', 'oled', 'Ahorra batería en pantallas OLED como la del iPhone'), toggle('Todo en negrita', 'boldAll', 'Tipografía SF Bold en todo el texto'), toggle('Fondo aurora', 'wallpaper', 'Manchas de color detrás del vidrio'),
+      h('label', { class: 'sl' }, h('span', null, 'Desenfoque del vidrio'), h('input', { type: 'range', min: 8, max: 48, step: 1, value: settings.blur ?? 28, oninput: e => setSettings({ blur: +e.target.value }) })),
       h('label', { class: 'sl' }, h('span', null, 'Tamaño del texto'), h('input', { type: 'range', min: .85, max: 1.35, step: .01, value: settings.scale, oninput: e => setSettings({ scale: +e.target.value }) })),
       h('label', { class: 'sl' }, h('span', null, 'Redondeo'), h('input', { type: 'range', min: 4, max: 28, step: 1, value: settings.radius, oninput: e => setSettings({ radius: +e.target.value }) })),
       !isTouch && toggle('Enter envía el mensaje', 'enterSends', 'Shift+Enter hace un salto de línea')),
 
-    h('section', { class: 'card glass' }, h('h3', null, '☁️ Sincronizar con tu Google Drive'),
+    h('section', { class: 'card glass' }, h('h3', null, 'Sincronización con Google Drive'),
       h('p', { class: 'mute' }, 'Gratis. Tus notas y archivos (en calidad original, 4K incluido) se guardan en una carpeta oculta de TU Drive y aparecen en todos tus dispositivos. Usa tus 15 GB gratuitos de Google.'),
       stat, h('label', { class: 'lbl' }, 'Client ID de Google'), cid,
       h('div', { class: 'row gap wrap' },
@@ -593,13 +594,13 @@ function settingsView() {
           h('li', null, 'En "Orígenes autorizados de JavaScript" poné la dirección donde publiques esta web (ej: ', h('code', null, location.origin), ').'),
           h('li', null, 'Copiá el Client ID, pegalo arriba y tocá Conectar. Repetí "Conectar" en cada dispositivo.')))),
 
-    h('section', { class: 'card glass' }, h('h3', null, '💾 Almacenamiento y datos'), storage,
+    h('section', { class: 'card glass' }, h('h3', null, 'Almacenamiento y datos'), storage,
       h('div', { class: 'row gap wrap' }, persistBtn,
         h('button', { class: 'btn ghost', onclick: exportBackup }, ic('dl', 18), 'Copia de seguridad'),
         h('button', { class: 'btn ghost', onclick: () => { const i = h('input', { type: 'file', accept: '.json', onchange: () => importBackup(i.files[0]) }); i.click(); } }, 'Importar copia'),
         h('button', { class: 'btn ghost danger', onclick: async () => { if (await confirmBox('¿Borrar TODO?', 'Se eliminan todos los chats, archivos y eventos de este dispositivo. No se puede deshacer.', 'Borrar todo')) { await DB.clearAll(); localStorage.removeItem('notis.sync'); location.reload(); } } }, 'Borrar todo')),
       h('p', { class: 'mute small' }, 'iPhone: abrí esta página en Safari → Compartir → "Añadir a pantalla de inicio". Así iOS no borra tus datos por falta de uso y se ve como app.')),
-    h('section', { class: 'card glass' }, h('h3', null, 'ℹ️ Notas sobre calidad'),
+    h('section', { class: 'card glass' }, h('h3', null, 'Sobre la calidad de tus archivos'),
       h('p', { class: 'mute' }, 'Los archivos se guardan byte por byte, sin recomprimir. Las ediciones (recorte, filtros, encuadre) no tocan el original: se aplican al mostrar, y al exportar una foto se procesa desde los píxeles originales. Si elegís fotos desde la galería del iPhone, iOS puede convertirlas (HEIC→JPG); para conservar el original exacto subilas desde "Archivos".'))));
 }
 async function exportBackup() {
